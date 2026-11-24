@@ -279,7 +279,7 @@ test('① 腳本可以刪除、上移、新增一句，改完出現「照腳本�
   await ui.unmount()
 })
 
-test('VS Code 聊天面板沒有 Image：② 改用 SVG 縮圖，內嵌 PNG，沒有 PNG 的風格只畫向量版', async ($, on) => {
+test('VS Code 聊天面板沒有 Image：② 改用 SVG 包住 PNG 縮圖，沒有 PNG 的風格只畫色票', async ($, on) => {
   const fs = fakeFs(on)
   fs.put('STYLES/thumbs/studio.png', 'png-bytes')
   on('clock.now', () => ({ value: fs.now() }))
@@ -295,14 +295,11 @@ test('VS Code 聊天面板沒有 Image：② 改用 SVG 縮圖，內嵌 PNG，�
 
   const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
   expect(await ui.find({ type: 'Image' })).toBeFalsy()
+  // 只有 studio 有 PNG，所以只有一張 SVG；霓虹沒有縮圖，只剩色票與按鈕
   const svgs = await ui.findAll({ type: 'Svg' })
-  expect(svgs.length).toBe(2)
-  const byAlt = (alt: string) => svgs.find(found => found.props.alt === alt)
-  const studio = byAlt('暖白解說')
-  expect(studio?.props.source).toContain('data:image/png;base64,' + btoa('png-bytes'))
-  expect(studio?.props.source).toContain('#e2694a')
-  const neon = byAlt('霓虹')
-  expect(neon?.props.source).toContain('霓虹')
-  expect(neon?.props.source).not.toContain('<image')
+  expect(svgs.length).toBe(1)
+  expect(svgs[0]?.props.alt).toBe('暖白解說')
+  expect(svgs[0]?.props.source).toContain('data:image/png;base64,' + btoa('png-bytes'))
+  expect(await ui.find({ type: 'Button', key: 'style-neon' })).toBeTruthy()
   await ui.unmount()
 })

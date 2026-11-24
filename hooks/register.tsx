@@ -40,27 +40,17 @@ const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { sh
 /** thumb：PNG 縮圖路徑（終端機用 Image 畫）；svg：VS Code、桌面版等畫面用的縮圖（它們沒有 Image，但有 Svg）。 */
 type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null; svg: string | null }
 
-const xml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-
 /**
- * 風格縮圖的 SVG：先用風格的顏色畫一張向量版（小標、重點色名稱、副標，和 PNG 縮圖同一個構圖），
- * 再把 PNG 縮圖疊在上面。畫面不讓 SVG 內嵌圖片時，至少還看得到向量版。
+ * 風格縮圖的 SVG：只是把 PNG 縮圖包起來，PNG（scripts/thumbs.mjs 產生）是唯一的來源，
+ * 不另外維護一份向量版面。沒有 PNG 時回傳 null，面板只畫色票。
  */
-function thumbSvg(style: { id: string; name: string; colors: Record<string, string>; fonts?: Record<string, string> }, pngBase64: string | null) {
-  const c = style.colors
-  const font = xml((style.fonts?.display ?? 'sans-serif').replace(/"/g, ''))
-  const name = xml(style.name)
-  const chip = Math.min(140, 30 + style.name.length * 22)
-  return [
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90" width="160" height="90">',
-    `<rect width="160" height="90" rx="6" fill="${xml(c.backdrop ?? c.bg ?? '#000')}"/>`,
-    `<text x="80" y="27" text-anchor="middle" font-family="${font}" font-size="7" letter-spacing="1" fill="${xml(c.accentInk ?? c.accent ?? '#888')}">${xml(style.id.toUpperCase())}</text>`,
-    `<rect x="${80 - chip / 2}" y="33" width="${chip}" height="24" rx="4" fill="${xml(c.accent ?? '#888')}"/>`,
-    `<text x="80" y="50.5" text-anchor="middle" font-family="${font}" font-size="16" font-weight="700" fill="${xml(c.accentText ?? c.text ?? '#fff')}">${name}</text>`,
-    `<text x="80" y="71" text-anchor="middle" font-family="${font}" font-size="7" fill="${xml(c.muted ?? c.text ?? '#888')}">demo 影片</text>`,
-    pngBase64 ? `<image href="data:image/png;base64,${pngBase64}" width="160" height="90" preserveAspectRatio="xMidYMid slice"/>` : '',
-    '</svg>',
-  ].join('')
+function thumbSvg(pngBase64: string | null): string | null {
+  if (!pngBase64) return null
+  return (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90" width="160" height="90">' +
+    `<image href="data:image/png;base64,${pngBase64}" width="160" height="90"/>` +
+    '</svg>'
+  )
 }
 let styles: StyleInfo[] = []
 
@@ -103,7 +93,6 @@ async function loadStyles($: $Like) {
         id: string
         name?: string
         colors: Record<string, string>
-        fonts?: Record<string, string>
       }
       const c = style.colors
       const thumbPath = `${dir}/thumbs/${style.id}.png`
@@ -120,7 +109,7 @@ async function loadStyles($: $Like) {
         name: style.name ?? style.id,
         swatch: [c.backdrop ?? c.bg, c.surface, c.text, c.accent].filter((x): x is string => Boolean(x)),
         thumb,
-        svg: thumbSvg({ ...style, name: style.name ?? style.id }, png),
+        svg: thumbSvg(png),
       })
     } catch {
       // 壞掉的風格檔不擋面板，算圖時 render.mjs 會指出錯在哪

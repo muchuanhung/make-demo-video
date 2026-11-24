@@ -51,6 +51,32 @@
 
 分鏡表與風格檔的格式見 [`skills/make-demo-video/SKILL.md`](skills/make-demo-video/SKILL.md)，範例見 [`examples/weather-board/`](examples/weather-board/)。
 
+## 進度面板（mod）
+
+安裝 plugin 後，跑 `/make-demo-video` 時會在對話旁邊打開一個面板，跟著 ① 腳本 → ② 風格 → ③ 分鏡 → ④ 算圖 前進：
+
+- ① 腳本、③ 分鏡可以上移、下移、刪除；腳本也能新增一句，改完按鈕重排或重新算圖。
+- ② 用面板選風格（縮圖＋色票）、比例（16:9／9:16）、秒數與幕數。
+- 縮圖在 VS Code 的 Claude 聊天面板與支援 kitty graphics 的終端機（Ghostty、kitty）看得到；其他終端機只顯示色票。
+- 沒有面板的環境（例如 `claude -p`）會改用對話框問同樣四件事。
+
+## 開發
+
+新增或修改 `skills/make-demo-video/styles/` 的風格檔後，重算面板用的縮圖：
+
+```bash
+cd skills/make-demo-video
+node scripts/thumbs.mjs          # 重算縮圖，更新 styles/thumbs/manifest.json
+node scripts/thumbs.mjs --check  # 只檢查：有風格缺縮圖或改過沒重算，就列出來並失敗
+```
+
+面板（`hooks/register.tsx`）的測試與檢查，在 repo 根目錄跑：
+
+```bash
+claude plugin test .
+claude plugin validate .
+```
+
 ## 授權
 
 MIT
