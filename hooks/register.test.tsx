@@ -118,6 +118,12 @@ test('面板跟著四步前進：選設定、刪一幕、重新算圖', async ($
   const moved = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text)
   expect(moved.scenes.map((s: { kind: string }) => s.kind)).toEqual(['title', 'outro', 'points'])
 
+  // 下移第 1 幕（title）到第 2 幕
+  await ui.redraw()
+  await ui.press({ key: 'down-0' })
+  const down = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text)
+  expect(down.scenes.map((s: { kind: string }) => s.kind)).toEqual(['outro', 'title', 'points'])
+
   await ui.redraw()
   await ui.press({ key: 'rerender' })
   expect(submitted.at(-1)).toContain('重新算圖')
@@ -249,6 +255,14 @@ test('① 腳本可以刪除、上移、新增一句，改完出現「照腳本�
   expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 甲\n2. 丙\n')
   await ui.redraw()
   await ui.press({ key: 'line-up-1' })
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 丙\n2. 甲\n')
+  await ui.redraw()
+  await ui.press({ key: 'line-down-0' })
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 甲\n2. 丙\n')
+  // 最後一句沒有 ↓
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'line-down-1' })).toBeFalsy()
+  await ui.press({ key: 'line-down-0' })
   expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 丙\n2. 甲\n')
   await ui.redraw()
   await ui.input({ key: 'line-add', text: '  新的一句 ', kind: 'submit' })

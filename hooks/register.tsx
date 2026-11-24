@@ -231,6 +231,7 @@ async function editScript($: $Like, op: (list: string[]) => string[]) {
 }
 
 const moveUp = (i: number) => <T,>(list: T[]) => [...list.slice(0, i - 1), ...list.slice(i, i + 1), ...list.slice(i - 1, i), ...list.slice(i + 1)]
+const moveDown = (i: number) => moveUp(i + 1)
 const remove = (i: number) => <T,>(list: T[]) => list.filter((_, j) => j !== i)
 
 function styleLabel(id: string) {
@@ -408,6 +409,11 @@ export const register: Register = on => {
               </Text>
             </Box>
             {r.out && i > 0 ? <Button key={`line-up-${i}`} label="↑" onPress={() => editScript($, moveUp(i))} /> : <Text>   </Text>}
+            {r.out && i < r.script.length - 1 ? (
+              <Button key={`line-down-${i}`} label="↓" onPress={() => editScript($, moveDown(i))} />
+            ) : (
+              <Text>   </Text>
+            )}
             {r.out && r.script.length > 1 ? (
               <Button key={`line-del-${i}`} label="✕" onPress={() => editScript($, remove(i))} />
             ) : null}
@@ -542,6 +548,11 @@ export const register: Register = on => {
               </Text>
             </Box>
             {i > 0 ? <Button key={`up-${i}`} label="↑" onPress={() => editScenes($, moveUp(i))} /> : <Text>   </Text>}
+            {i < r.scenes.length - 1 ? (
+              <Button key={`down-${i}`} label="↓" onPress={() => editScenes($, moveDown(i))} />
+            ) : (
+              <Text>   </Text>
+            )}
             {r.scenes.length > 2 ? <Button key={`del-${i}`} label="✕" onPress={() => editScenes($, remove(i))} /> : null}
           </Box>
         ))}
