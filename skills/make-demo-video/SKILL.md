@@ -81,6 +81,8 @@ node <skill>/scripts/render.mjs --storyboard <out>/storyboard.json --style <風�
 
 - **同一份分鏡表出多種風格的合輯**（開場或比較風格用）：
   `node <skill>/scripts/reel.mjs --storyboard <out>/storyboard.json --styles screenplay,terminal,neon --from 1 --seconds 5`
+- **多個專案 × 多種風格的合輯**：寫一份 `reel.json` 列出每一段，再跑 `node <skill>/scripts/reel.mjs --plan reel.json`。
+  `{ "seconds": 5, "clips": [{ "storyboard": "../a/storyboard.json", "style": "neon", "from": 3 }] }`，路徑相對於 reel.json，`style` 可以是內建 id 或風格檔路徑。
 - **不算圖先預覽**：用瀏覽器打開 `<out>/demo.player.html`，會循環播放。
 
 ## 內建風格
