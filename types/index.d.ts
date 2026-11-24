@@ -23,7 +23,7 @@ export type Run = {
   choice: Choice
   isChosen: boolean
   scenes: SceneRow[]
-  /** 分鏡在面板上被改過，還沒重新算圖。 */
+  /** 分鏡表在上次合成影片之後改過（或還沒合成過），要按「合成影片」。 */
   isEdited: boolean
   /** 腳本在面板上被改過，分鏡表還沒照新腳本重排。 */
   isScriptEdited: boolean
@@ -31,6 +31,12 @@ export type Run = {
   renderSeconds: number | null
   /** 讀檔失敗等狀況的說明，面板最下方用淡色顯示，方便排查。 */
   note: string | null
+  /** 分鏡縮圖（frames/scene-N.png）最後產生的時間；也當作圖片的 generation，換圖時畫面才會更新。 */
+  framesAt: number | null
+  /** 正在產生分鏡縮圖。 */
+  isFraming: boolean
+  /** 分鏡卡下方打開的輸入框：在第 index 幕後插一句，或重畫第 index 幕。 */
+  openInput: { kind: 'insert' | 'redo'; index: number } | null
 }
 
 declare module 'claude-code' {

@@ -1,8 +1,9 @@
 import { expect, test } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-// 面板走完一次 /make-demo-video：① 讀到 script.md、② 在面板上選、③ 刪一幕、④ 算圖完成。
-// 檔案系統用記憶體裡的假資料代替，hook 在這裡代表 engine。
+// 面板走完一次 /make-demo-video：① 腳本、② 在面板上選、③ 分鏡板（縮圖、上下移、刪除、插一句、重畫）、④ 合成影片。
+// 檔案系統與指令執行用記憶體裡的假資料代替，hook 在這裡代表 engine。
 
 const STYLES: Record<string, object> = {
   studio: { id: 'studio', name: '暖白解說', colors: { bg: '#fcfaf7', surface: '#fff', text: '#2b2726', accent: '#e2694a' } },
@@ -40,12 +41,46 @@ function fakeFs(on: On, failReads?: RegExp) {
   on('fs.list', (_, e) => {
     const dir = key(e.path)
     return {
-    value: [...files.keys()]
-      .filter(p => p.startsWith(dir + '/') && !p.slice(dir.length + 1).includes('/'))
-      .map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 0, mtimeMs: 0, isLink: false })),
+      value: [...files.keys()]
+        .filter(p => p.startsWith(dir + '/') && !p.slice(dir.length + 1).includes('/'))
+        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 0, mtimeMs: 0, isLink: false })),
     }
   })
-  return { files, put, now: () => clock }
+  return { files, put, key, now: () => clock }
+}
+
+/**
+ * engine 的其餘部分：送出的訊息記在 submitted，跑過的指令記在 runs。
+ * frames.mjs 被呼叫時，照當下的分鏡表幕數「產生」縮圖檔；framesExit 不是 0 時模擬失敗。
+ */
+function engine(on: On, fs: ReturnType<typeof fakeFs>, opts: { toolStdout?: string; framesExit?: number } = {}) {
+  const submitted: string[] = []
+  const runs: string[][] = []
+  on('clock.now', () => ({ value: fs.now() }))
+  on('command.register', () => ({ value: { command: 'demo-panel' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => {
+    submitted.push(e.text ?? '')
+    return { text: e.text ?? '' }
+  })
+  on('tool.call', () => ({ result: { stdout: opts.toolStdout ?? '' } }))
+  on('process.run', (_, e) => {
+    const argv = [...e.argv]
+    runs.push(argv)
+    const exitCode = opts.framesExit ?? 0
+    if (exitCode === 0 && argv.some(a => a.endsWith('frames.mjs'))) {
+      const board = fs.files.get(fs.key(argv[argv.indexOf('--storyboard') + 1] ?? ''))
+      const out = fs.key(argv[argv.indexOf('--out') + 1] ?? '')
+      const count = board ? (JSON.parse(board.text) as { scenes: unknown[] }).scenes.length : 0
+      for (let n = 1; n <= count; n++) fs.put(`${out}/scene-${n}.png`, `frame-${n}`)
+    }
+    return {
+      value: { exitCode, stdout: '', stderr: exitCode ? 'Error: 找不到風格「nope」' : '', isStdoutTruncated: false, isStderrTruncated: false },
+    }
+  })
+  return { submitted, runs }
 }
 
 const PANE = {
@@ -66,34 +101,39 @@ const BOARD = {
     { kind: 'outro', seconds: 3, heading: '打開就能用' },
   ],
 }
+const SCRIPT = '1. 台灣天氣，一頁看完\n2. 選縣市\n3. 三個重點\n4. 打開就能用\n'
 
-test('面板跟著四步前進：選設定、刪一幕、重新算圖', async ($, on) => {
-  const fs = fakeFs(on)
-  const submitted: string[] = []
-  on('clock.now', () => ({ value: fs.now() }))
-  on('command.register', () => ({ value: { command: 'demo-panel' } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => {
-    submitted.push(e.text ?? '')
-    return { text: e.text ?? '' }
-  })
-  on('tool.call', () => ({ result: { stdout: '算圖中 100%\n完成，花了 13.2 秒（影片 12 秒）' } }))
-
-  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
+async function begin($: Engine, surface: 'desktop' | 'terminal' | 'vscode' = 'desktop') {
+  await $.session.start({ cwd: '/repo', surface, isInteractive: true })
   await $.prompt.submit({ text: '/make-demo-video 把這個 repo 做成 demo 影片', wait: false, origin: { kind: 'composer' } })
+}
 
+/** Claude 寫出腳本與分鏡表（Write 工具），面板會跟著重算縮圖。 */
+async function writeBoth($: Engine, fs: ReturnType<typeof fakeFs>, board: object = BOARD, script = SCRIPT) {
+  fs.put('docs/demo/script.md', script)
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/script.md', content: script })
+  fs.put('docs/demo/storyboard.json', JSON.stringify(board))
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(board) })
+}
+
+const kinds = (fs: ReturnType<typeof fakeFs>) =>
+  (JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text) as { scenes: { kind: string }[] }).scenes.map(s => s.kind)
+
+test('面板跟著四步前進：選設定、分鏡板改順序與刪除、確認後才合成影片', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted, runs } = engine(on, fs, { toolStdout: '算圖中 100%\n完成，花了 13.2 秒（影片 12 秒）' })
+  await begin($)
   const ui = await $.ui.mount(PANE)
   expect((await ui.find({ type: 'Text', text: /讀素材中/ }))?.text).toContain('讀素材中')
 
-  // ① Claude 寫了 script.md
-  fs.put('docs/demo/script.md', '1. 台灣天氣，一頁看完\n2. 選縣市\n3. 三個重點\n4. 打開就能用\n')
-  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/script.md', content: '…' })
+  // ① Claude 寫了 script.md：分鏡板出現前，腳本可以逐句改
+  fs.put('docs/demo/script.md', SCRIPT)
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/script.md', content: SCRIPT })
   await ui.redraw()
   expect((await ui.find({ type: 'Text', text: /script\.md・4 句/ }))?.text).toContain('4 句')
+  expect(await ui.find({ type: 'Button', key: 'line-del-1' })).toBeTruthy()
 
-  // ② Claude 呼叫 show_options，使用者在面板上改成霓虹、9:16、45 秒、3 幕再按確定
+  // ② Claude 呼叫 show_options，使用者改成霓虹、9:16、45 秒、3 幕再按確定
   await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['neon', 'nope'], scenes: 4 })
   await ui.redraw()
   await ui.press({ key: 'aspect-9:16' })
@@ -102,42 +142,112 @@ test('面板跟著四步前進：選設定、刪一幕、重新算圖', async ($
   await ui.press({ key: 'confirm' })
   expect(submitted.at(-1)).toBe('② 選好了：風格 霓虹（neon）、比例 9:16、約 45 秒、3 幕')
 
-  // ③ Claude 寫了 storyboard.json；使用者刪掉第 2 幕
+  // ③ Claude 寫了 storyboard.json：面板跑 frames.mjs 產生縮圖，① 收成一行，卡片顯示腳本句子
   fs.put('docs/demo/storyboard.json', JSON.stringify(BOARD))
-  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: '…' })
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
+  const frames = runs.at(-1)!
+  expect(frames[1]).toMatch(/skills\/make-demo-video\/scripts\/frames\.mjs$/)
+  expect(frames.slice(2)).toEqual(['--storyboard', 'docs/demo/storyboard.json', '--style', 'neon', '--out', 'docs/demo/frames'])
   await ui.redraw()
   expect((await ui.find({ type: 'Text', text: /4 幕 15 秒/ }))?.text).toContain('storyboard.json')
-  await ui.press({ key: 'del-1' })
-  const board = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text)
-  expect(board.scenes.map((s: { kind: string }) => s.kind)).toEqual(['title', 'points', 'outro'])
-  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 台灣天氣，一頁看完\n2. 三個重點\n3. 打開就能用\n')
+  expect((await ui.find({ type: 'Text', text: /在下方分鏡板編輯/ }))?.text).toContain('4 句')
+  expect(await ui.find({ type: 'Button', key: 'line-del-1' })).toBeFalsy()
+  expect((await ui.find({ type: 'Text', text: /^三個重點$/ }))?.text).toBe('三個重點')
+  expect(await ui.find({ type: 'Button', key: 'compose' })).toBeTruthy()
 
-  // 上移第 3 幕（outro）到第 2 幕
+  // 刪掉第 2 幕：分鏡表與腳本一起改，縮圖重算
+  const before = runs.length
+  await ui.press({ key: 'del-1' })
+  expect(kinds(fs)).toEqual(['title', 'points', 'outro'])
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 台灣天氣，一頁看完\n2. 三個重點\n3. 打開就能用\n')
+  expect(runs.length).toBe(before + 1)
+
+  // 上移第 3 幕、下移第 1 幕
   await ui.redraw()
   await ui.press({ key: 'up-2' })
-  const moved = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text)
-  expect(moved.scenes.map((s: { kind: string }) => s.kind)).toEqual(['title', 'outro', 'points'])
-
-  // 下移第 1 幕（title）到第 2 幕
+  expect(kinds(fs)).toEqual(['title', 'outro', 'points'])
   await ui.redraw()
   await ui.press({ key: 'down-0' })
-  const down = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text)
-  expect(down.scenes.map((s: { kind: string }) => s.kind)).toEqual(['outro', 'title', 'points'])
+  expect(kinds(fs)).toEqual(['outro', 'title', 'points'])
+  expect(await ui.find({ type: 'Button', key: 'down-2' })).toBeFalsy()
 
+  // ④ 按合成影片 → Claude 算圖 → 完成
   await ui.redraw()
-  await ui.press({ key: 'rerender' })
-  expect(submitted.at(-1)).toContain('重新算圖')
-
-  // ④ 算圖完成
+  await ui.press({ key: 'compose' })
+  expect(submitted.at(-1)).toMatch(/^合成影片：/)
   await $.tool.call({ tool: 'Bash', command: 'node render.mjs --storyboard docs/demo/storyboard.json --style neon --out docs/demo' })
   await ui.redraw()
   expect((await ui.find({ type: 'Text', text: /demo\.mp4・13\.2 秒/ }))?.text).toContain('結果頁已打開')
+  expect(await ui.find({ type: 'Button', key: 'compose' })).toBeFalsy()
+
+  // 合成之後 Claude 又改了分鏡表（例如重畫一幕）：要再合成一次
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'compose' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('分鏡卡：插一句、重畫一幕都交給 Claude，只改那一幕', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted } = engine(on, fs)
+  await begin($)
+  await writeBoth($, fs)
+  const ui = await $.ui.mount(PANE)
+
+  await ui.press({ key: 'insert-1' })
+  await ui.input({ key: 'insert-input-1', text: '  搜尋任何城市 ', kind: 'submit' })
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 台灣天氣，一頁看完\n2. 選縣市\n3. 搜尋任何城市\n4. 三個重點\n5. 打開就能用\n')
+  expect(submitted.at(-1)).toBe('插入一幕：在第 2 幕後面插入一句「搜尋任何城市」（script.md 已更新）；只為這句補一幕，其他幕不動')
+
+  // 腳本 5 句、分鏡還是 4 幕：提示對不上，可以照腳本重排
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /對不上/ }))?.text).toContain('腳本 5 句、分鏡 4 幕')
+  expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeTruthy()
+
+  await ui.press({ key: 'redo-0' })
+  await ui.input({ key: 'redo-input-0', text: '推近到標題', kind: 'submit' })
+  expect(submitted.at(-1)).toBe('重畫第 1 幕：推近到標題；只改這一幕，腳本的字不變')
+  await ui.redraw()
+  await ui.press({ key: 'redo-2' })
+  await ui.input({ key: 'redo-input-2', text: '', kind: 'submit' })
+  expect(submitted.at(-1)).toBe('重畫第 3 幕：換一個呈現方式；只改這一幕，腳本的字不變')
+  await ui.unmount()
+})
+
+test('分鏡卡縮圖：終端機用 Image（絕對路徑、generation），VS Code 用 SVG 包 PNG', async ($, on) => {
+  const fs = fakeFs(on)
+  engine(on, fs)
+  await begin($, 'terminal')
+  await writeBoth($, fs)
+
+  const term = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const images = (await term.findAll({ type: 'Image' })).filter(found => String(found.props.alt).startsWith('第'))
+  expect(images.length).toBe(4)
+  expect(images[0]?.props.source).toMatchObject({ file: '/repo/docs/demo/frames/scene-1.png', format: 'png' })
+  expect(typeof (images[0]?.props.source as { generation?: number }).generation).toBe('number')
+  await term.unmount()
+
+  const code = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  const svgs = (await code.findAll({ type: 'Svg' })).filter(found => String(found.props.alt).startsWith('第'))
+  expect(svgs.length).toBe(4)
+  expect(svgs[1]?.props.source).toContain('data:image/png;base64,' + btoa('frame-2'))
+  await code.unmount()
+})
+
+test('縮圖產生失敗時不擋流程，面板註明原因', async ($, on) => {
+  const fs = fakeFs(on)
+  engine(on, fs, { framesExit: 1 })
+  await begin($)
+  await writeBoth($, fs)
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /分鏡縮圖產生失敗/ }))?.text).toContain('找不到風格')
+  expect(await ui.find({ type: 'Button', key: 'compose' })).toBeTruthy()
   await ui.unmount()
 })
 
 test('沒在跑 /make-demo-video 時，其他工具呼叫不受影響、面板只顯示提示', async ($, on) => {
-  fakeFs(on)
-  on('tool.call', () => ({ result: { stdout: 'ok' } }))
+  const fs = fakeFs(on)
+  engine(on, fs, { toolStdout: 'ok' })
   const ran = await $.tool.call({ tool: 'Bash', command: 'cat docs/demo/script.md' })
   expect(ran.result).toEqual({ stdout: 'ok' })
   const ui = await $.ui.mount(PANE)
@@ -148,15 +258,8 @@ test('沒在跑 /make-demo-video 時，其他工具呼叫不受影響、面板�
 test('終端機上 ② 顯示風格縮圖，沒有縮圖的風格只畫色票', async ($, on) => {
   const fs = fakeFs(on)
   fs.put('STYLES/thumbs/studio.png', 'png')
-  on('clock.now', () => ({ value: fs.now() }))
-  on('command.register', () => ({ value: { command: 'demo-panel' } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
-
-  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await $.prompt.submit({ text: '/make-demo-video', wait: false, origin: { kind: 'composer' } })
+  engine(on, fs)
+  await begin($, 'terminal')
   await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['studio'] })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -167,18 +270,28 @@ test('終端機上 ② 顯示風格縮圖，沒有縮圖的風格只畫色票', 
   await ui.unmount()
 })
 
+test('VS Code 聊天面板沒有 Image：② 改用 SVG 包住 PNG 縮圖，沒有 PNG 的風格只畫色票', async ($, on) => {
+  const fs = fakeFs(on)
+  fs.put('STYLES/thumbs/studio.png', 'png-bytes')
+  engine(on, fs)
+  await begin($, 'vscode')
+  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['studio'] })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect(await ui.find({ type: 'Image' })).toBeFalsy()
+  // 只有 studio 有 PNG，所以只有一張 SVG；霓虹沒有縮圖，只剩色票與按鈕
+  const svgs = await ui.findAll({ type: 'Svg' })
+  expect(svgs.length).toBe(1)
+  expect(svgs[0]?.props.alt).toBe('暖白解說')
+  expect(svgs[0]?.props.source).toContain('data:image/png;base64,' + btoa('png-bytes'))
+  expect(await ui.find({ type: 'Button', key: 'style-neon' })).toBeTruthy()
+  await ui.unmount()
+})
+
 test('Bash 一次寫出 script.md 和 storyboard.json、讀檔又失敗時，面板仍從指令內容顯示，並註明讀不到的原因', async ($, on) => {
   const fs = fakeFs(on, /demo-syntax/)
-  on('clock.now', () => ({ value: fs.now() }))
-  on('command.register', () => ({ value: { command: 'demo-panel' } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
-  on('tool.call', () => ({ result: { stdout: '' } }))
-
-  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
-  await $.prompt.submit({ text: '/make-demo-video https://syntax.sammics.cc', wait: false, origin: { kind: 'composer' } })
+  engine(on, fs)
+  await begin($)
   // 檔案在磁碟上存在，但讀取失敗（模擬實機上讀不到的情況）
   fs.put('/abs/docs/demo-syntax/script.md', 'x')
   const command = [
@@ -202,16 +315,8 @@ test('Bash 一次寫出 script.md 和 storyboard.json、讀檔又失敗時，面
 
 test('先 cd 到輸出資料夾再寫檔、或只寫檔名時，輸出資料夾不會被當成檔名', async ($, on) => {
   const fs = fakeFs(on)
-  on('clock.now', () => ({ value: fs.now() }))
-  on('command.register', () => ({ value: { command: 'demo-panel' } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
-  on('tool.call', () => ({ result: { stdout: '完成，花了 11.7 秒' } }))
-
-  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
-  await $.prompt.submit({ text: '/make-demo-video', wait: false, origin: { kind: 'composer' } })
+  engine(on, fs, { toolStdout: '完成，花了 11.7 秒' })
+  await begin($)
   await $.tool.call({ tool: 'Write', file_path: '/repo/docs/demo-kinutabi/script.md', content: '1. 甲\n2. 乙\n3. 丙\n' })
   const board = JSON.stringify({ scenes: [{ kind: 'title', seconds: 3, heading: '甲' }, { kind: 'outro', seconds: 3, heading: '丙' }] })
   await $.tool.call({ tool: 'Bash', command: `cd docs/demo-kinutabi && cat > storyboard.json <<'EOF'\n${board}\nEOF` })
@@ -228,78 +333,28 @@ test('先 cd 到輸出資料夾再寫檔、或只寫檔名時，輸出資料夾�
   await ui.unmount()
 })
 
-test('① 腳本可以刪除、上移、新增一句，改完出現「照腳本重排分鏡」', async ($, on) => {
+test('分鏡板出現前，① 腳本可以刪除、上移、下移、新增一句', async ($, on) => {
   const fs = fakeFs(on)
-  const submitted: string[] = []
-  on('clock.now', () => ({ value: fs.now() }))
-  on('command.register', () => ({ value: { command: 'demo-panel' } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => {
-    submitted.push(e.text ?? '')
-    return { text: e.text ?? '' }
-  })
-  on('tool.call', () => ({ result: {} }))
-
-  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
-  await $.prompt.submit({ text: '/make-demo-video', wait: false, origin: { kind: 'composer' } })
+  engine(on, fs)
+  await begin($)
   fs.put('docs/demo/script.md', '1. 甲\n2. 乙\n3. 丙\n')
   await $.tool.call({ tool: 'Write', file_path: 'docs/demo/script.md', content: '1. 甲\n2. 乙\n3. 丙\n' })
-  fs.put('docs/demo/storyboard.json', JSON.stringify(BOARD))
-  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
 
   const ui = await $.ui.mount(PANE)
-  expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeFalsy()
   await ui.press({ key: 'line-del-1' })
   expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 甲\n2. 丙\n')
   await ui.redraw()
   await ui.press({ key: 'line-up-1' })
   expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 丙\n2. 甲\n')
   await ui.redraw()
-  await ui.press({ key: 'line-down-0' })
-  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 甲\n2. 丙\n')
-  // 最後一句沒有 ↓
-  await ui.redraw()
   expect(await ui.find({ type: 'Button', key: 'line-down-1' })).toBeFalsy()
   await ui.press({ key: 'line-down-0' })
-  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 丙\n2. 甲\n')
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 甲\n2. 丙\n')
   await ui.redraw()
   await ui.input({ key: 'line-add', text: '  新的一句 ', kind: 'submit' })
-  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 丙\n2. 甲\n3. 新的一句\n')
-
-  await ui.redraw()
-  await ui.press({ key: 'rebuild' })
-  expect(submitted.at(-1)).toMatch(/^照腳本重排：/)
-
-  // Claude 照新腳本重寫分鏡表後，按鈕消失
-  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 甲\n2. 丙\n3. 新的一句\n')
+  // 還沒有分鏡板，不需要「照腳本重排」
   await ui.redraw()
   expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeFalsy()
-  await ui.unmount()
-})
-
-test('VS Code 聊天面板沒有 Image：② 改用 SVG 包住 PNG 縮圖，沒有 PNG 的風格只畫色票', async ($, on) => {
-  const fs = fakeFs(on)
-  fs.put('STYLES/thumbs/studio.png', 'png-bytes')
-  on('clock.now', () => ({ value: fs.now() }))
-  on('command.register', () => ({ value: { command: 'demo-panel' } }))
-  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('session.start', (_, e) => ({ cwd: e.cwd }))
-  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
-
-  await $.session.start({ cwd: '/repo', surface: 'vscode', isInteractive: true })
-  await $.prompt.submit({ text: '/make-demo-video', wait: false, origin: { kind: 'composer' } })
-  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['studio'] })
-
-  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
-  expect(await ui.find({ type: 'Image' })).toBeFalsy()
-  // 只有 studio 有 PNG，所以只有一張 SVG；霓虹沒有縮圖，只剩色票與按鈕
-  const svgs = await ui.findAll({ type: 'Svg' })
-  expect(svgs.length).toBe(1)
-  expect(svgs[0]?.props.alt).toBe('暖白解說')
-  expect(svgs[0]?.props.source).toContain('data:image/png;base64,' + btoa('png-bytes'))
-  expect(await ui.find({ type: 'Button', key: 'style-neon' })).toBeTruthy()
   await ui.unmount()
 })

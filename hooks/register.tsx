@@ -1,6 +1,9 @@
-// make-demo-video 的四步進度面板：跟著 ① 腳本 → ② 風格 → ③ 分鏡 → ④ 算圖 前進。
+// make-demo-video 的四步進度面板：跟著 ① 腳本 → ② 風格 → ③ 分鏡板 → ④ 合成影片 前進。
+// - ① 腳本在分鏡板出現前可以直接改；之後收成一行，改動都在分鏡卡上做。
 // - ② 由 Claude 呼叫 show_options 展開：風格縮圖、比例、秒數、幕數，按「確定」把選擇當成下一則訊息送出。
-// - ③ 列出分鏡，可上移、刪除（直接改 storyboard.json 與 script.md），按「重新算圖」才重算。
+// - ③ 分鏡板：每張卡是「一句腳本＋這一幕的縮圖」。↑ ↓ ✕ 直接改 storyboard.json 與 script.md；
+//   ＋ 插一句、⟳ 重畫這一幕交給 Claude 只改那一幕。分鏡表一變，面板自己跑 frames.mjs 重算縮圖（約 1 秒）。
+// - ④ 使用者確認分鏡板後按「合成影片」才算整支影片。
 // 進度從 Claude 的工具呼叫認出來（寫了 script.md、storyboard.json，跑了 render.mjs），不靠 Claude 回報。
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
@@ -32,10 +35,13 @@ const FRESH: Run = {
   renderedAt: null,
   renderSeconds: null,
   note: null,
+  framesAt: null,
+  isFraming: false,
+  openInput: null,
 }
 
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
-const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-3' })
+const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-4' })
 
 /** thumb：PNG 縮圖路徑（終端機用 Image 畫）；svg：VS Code、桌面版等畫面用的縮圖（它們沒有 Image，但有 Svg）。 */
 type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null; svg: string | null }
@@ -53,6 +59,10 @@ function thumbSvg(pngBase64: string | null): string | null {
   )
 }
 let styles: StyleInfo[] = []
+/** session 的工作目錄（終端機的 Image 要絕對路徑）；session.start 時記下。 */
+let cwd = ''
+/** 分鏡縮圖包成的 SVG，以「檔案路徑＃framesAt」為鍵，縮圖重算後自然換成新的。 */
+const frameSvgs = new Map<string, string>()
 
 type $Like = EngineInterface
 
@@ -188,6 +198,55 @@ async function start($: $Like) {
   await $.ui.open({ id: PANE, title: 'make-demo-video' })
 }
 
+const absolute = (path: string) => (path.startsWith('/') || !cwd ? path : join(cwd, path))
+
+/** 跑 frames.mjs 重算分鏡縮圖。失敗不擋流程，原因記在 note。 */
+async function regenFrames($: $Like) {
+  const r = await read($, run)
+  if (!r.out || r.scenes.length === 0) return
+  const style = r.choice.style === CUSTOM ? join(r.out, 'style.json') : r.choice.style
+  await update($, run, x => ({ ...x, isFraming: true }))
+  let note: string | null = null
+  let ok = false
+  try {
+    const res = await $.process.run(
+      [
+        'node',
+        `${$.plugin.root}/skills/make-demo-video/scripts/frames.mjs`,
+        '--storyboard',
+        join(r.out, 'storyboard.json'),
+        '--style',
+        style,
+        '--out',
+        join(r.out, 'frames'),
+      ],
+      { timeoutMs: 60_000 },
+    )
+    ok = res.exitCode === 0
+    if (!ok) note = `分鏡縮圖產生失敗：${res.stderr.trim().split('\n').at(-1) ?? res.exitCode}`
+  } catch (err) {
+    note = `分鏡縮圖產生失敗：${reason(err)}`
+  }
+  const now = await $.clock.now()
+  await update($, run, x => ({ ...x, isFraming: false, framesAt: ok ? now : x.framesAt, note: note ?? x.note }))
+}
+
+/** 第 n 幕縮圖的 SVG（VS Code 聊天面板等沒有 Image 的畫面用）。 */
+async function frameSvg($: $Like, file: string, framesAt: number, portrait: boolean): Promise<string | null> {
+  const key = `${file}#${framesAt}`
+  const cached = frameSvgs.get(key)
+  if (cached) return cached
+  const base64 = await ($.fs.read(file, { as: 'bytes' }) as Promise<unknown>).then(
+    v => (v as { base64?: string }).base64 ?? null,
+    () => null,
+  )
+  if (!base64) return null
+  const [w, h] = portrait ? [180, 320] : [320, 180]
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><image href="data:image/png;base64,${base64}" width="${w}" height="${h}"/></svg>`
+  frameSvgs.set(key, svg)
+  return svg
+}
+
 /** 改分鏡表；script.md 與分鏡一句一幕時，同一個動作也套到腳本上。 */
 async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
   const r = await read($, run)
@@ -204,8 +263,9 @@ async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
       await $.fs.write(scriptPath, op([...lines]).map((line, i) => `${i + 1}. ${line}`).join('\n') + '\n')
     }
   }
-  await update($, run, x => ({ ...x, isEdited: true }))
+  await update($, run, x => ({ ...x, isEdited: true, openInput: null }))
   await refresh($)
+  await regenFrames($)
 }
 
 /** 改腳本（上移、刪除、新增一句），寫回 script.md；分鏡表要等使用者按「照腳本重排分鏡」才改。 */
@@ -231,6 +291,7 @@ function styleLabel(id: string) {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    cwd = (e as unknown as { cwd?: string }).cwd ?? ''
     await loadStyles($)
     await $.command.register({ name: 'demo-panel', description: '打開 make-demo-video 的四步進度面板' })
     await $.tool.register({
@@ -313,6 +374,7 @@ export const register: Register = on => {
       await start($)
     }
     // 先用工具呼叫裡寫出的內容更新（不必等讀檔），輸出資料夾也以實際寫入的位置為準
+    let wroteBoard = false
     for (const w of writesIn(e)) {
       if (w.path.endsWith('script.md')) {
         const script = parseScript(w.content)
@@ -320,7 +382,15 @@ export const register: Register = on => {
       } else if (w.path.endsWith('storyboard.json')) {
         try {
           const scenes = toRows(JSON.parse(w.content) as { scenes?: unknown })
-          await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out, scenes, isScriptEdited: false }))
+          await update($, run, x => ({
+            ...x,
+            out: dirOf(w.path) ?? x.out,
+            scenes,
+            isScriptEdited: false,
+            isEdited: x.renderedAt !== null,
+            openInput: null,
+          }))
+          wroteBoard = true
         } catch {
           await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out }))
         }
@@ -347,6 +417,9 @@ export const register: Register = on => {
       }))
     }
     await refresh($)
+    // Claude 改了分鏡表（含 Edit 工具）：重算分鏡縮圖。process.run 等待的時間不算進這個 hook 的時間預算。
+    const touchedBoard = wroteBoard || (e.tool === 'Edit' && String((e as unknown as { file_path?: string }).file_path ?? '').endsWith('storyboard.json'))
+    if (touchedBoard) await regenFrames($)
     return ran
   }).catch(($, e, next) => next(e))
 
@@ -375,6 +448,7 @@ export const register: Register = on => {
       r.renderedAt !== null && !r.isEdited,
     ]
     const current = done.indexOf(false)
+    const hasBoard = r.scenes.length > 0
     const setChoice = (patch: Partial<Choice>) => update($, run, x => ({ ...x, choice: { ...x.choice, ...patch } }))
 
     const head = (i: number, title: string, detail: string) => (
@@ -389,8 +463,14 @@ export const register: Register = on => {
     // ① 腳本
     const step1 = (
       <Box flexDirection="column">
-        {head(0, '腳本', done[0] ? `${join(r.out ?? '', 'script.md')}・${r.script.length} 句` : '讀素材中…')}
-        {r.script.map((line, i) => (
+        {head(
+          0,
+          '腳本',
+          done[0]
+            ? `${join(r.out ?? '', 'script.md')}・${r.script.length} 句${hasBoard ? '（在下方分鏡板編輯）' : ''}`
+            : '讀素材中…',
+        )}
+        {(hasBoard ? [] : r.script).map((line, i) => (
           <Box flexDirection="row" paddingLeft={3}>
             <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate">
@@ -408,27 +488,13 @@ export const register: Register = on => {
             ) : null}
           </Box>
         ))}
-        {r.out && done[0] ? (
+        {r.out && done[0] && !hasBoard ? (
           <Box paddingLeft={3}>
             <Input
               key="line-add"
               placeholder="新增一句（20 字以內）…"
               submitLabel="加入"
               onSubmit={value => (value.trim() ? editScript($, list => [...list, value]) : undefined)}
-            />
-          </Box>
-        ) : null}
-        {r.isScriptEdited && r.scenes.length > 0 ? (
-          <Box paddingLeft={3}>
-            <Button
-              key="rebuild"
-              label="⟳ 照腳本重排分鏡"
-              variant="primary"
-              onPress={() =>
-                $.prompt.submit({
-                  text: '照腳本重排：script.md 已在面板上修改，依目前的 script.md 重排分鏡表（一句一幕）並重新算圖',
-                })
-              }
             />
           </Box>
         ) : null}
@@ -524,51 +590,141 @@ export const register: Register = on => {
       </Box>
     )
 
-    // ③ 分鏡：上移、刪除、重新算圖
+    // ③ 分鏡板：一張卡＝一句腳本＋這一幕的縮圖
     const total = r.scenes.reduce((sum, s) => sum + s.seconds, 0)
-    const step3 = (
-      <Box flexDirection="column">
-        {head(2, '分鏡', done[2] ? `${join(r.out ?? '', 'storyboard.json')}・${r.scenes.length} 幕 ${Math.round(total)} 秒` : '')}
-        {r.scenes.map((s, i) => (
-          <Box flexDirection="row" paddingLeft={3}>
-            <Box flexGrow={1} flexShrink={1}>
-              <Text wrap="truncate">
-                {String(i + 1).padStart(2)} <Text dimColor>{s.kind.padEnd(8)}</Text> {String(s.seconds).padStart(3)}s {s.label}
+    const portrait = c.aspect === '9:16'
+    const linked = r.script.length === r.scenes.length
+    const framesAt = r.framesAt ?? 0
+    const framePath = (i: number) => join(join(r.out ?? '', 'frames'), `scene-${i + 1}.png`)
+    const svgs = Svg && !Image && r.framesAt ? await Promise.all(r.scenes.map((_, i) => frameSvg($, framePath(i), framesAt, portrait))) : []
+    const thumbOf = (i: number) => {
+      if (!r.framesAt) return <Text dimColor>{r.isFraming ? '產生縮圖中…' : ' '}</Text>
+      if (Image) {
+        return (
+          <Image
+            key={`frame-${i}`}
+            source={{ file: absolute(framePath(i)), format: 'png', generation: framesAt }}
+            columns={portrait ? 6 : 16}
+            rows={portrait ? 6 : 4}
+            alt={`第 ${i + 1} 幕`}
+          />
+        )
+      }
+      const svg = svgs[i]
+      return Svg && svg ? <Svg source={svg} alt={`第 ${i + 1} 幕`} width={portrait ? 54 : 128} height={portrait ? 96 : 72} /> : <Text> </Text>
+    }
+    const ask = (text: string) => $.prompt.submit({ text })
+    const card = (s: SceneRow, i: number) => {
+      const line = linked ? r.script[i] ?? s.label : s.label
+      const input = r.openInput?.index === i ? r.openInput : null
+      return (
+        <Box flexDirection="column" paddingLeft={3}>
+          <Box flexDirection="row" gap={1}>
+            {thumbOf(i)}
+            <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+              <Text dimColor>
+                {i + 1} ・ {s.kind} ・ {s.seconds}s
               </Text>
+              <Text wrap="wrap">{line}</Text>
+              <Box flexDirection="row">
+                {i > 0 ? <Button key={`up-${i}`} label="↑" onPress={() => editScenes($, moveUp(i))} /> : null}
+                {i < r.scenes.length - 1 ? <Button key={`down-${i}`} label="↓" onPress={() => editScenes($, moveDown(i))} /> : null}
+                {r.scenes.length > 2 ? <Button key={`del-${i}`} label="✕" onPress={() => editScenes($, remove(i))} /> : null}
+                <Button
+                  key={`insert-${i}`}
+                  label="＋ 插一句"
+                  onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'insert' ? null : { kind: 'insert' as const, index: i } }))}
+                />
+                <Button
+                  key={`redo-${i}`}
+                  label="⟳ 重畫"
+                  onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'redo' ? null : { kind: 'redo' as const, index: i } }))}
+                />
+              </Box>
             </Box>
-            {i > 0 ? <Button key={`up-${i}`} label="↑" onPress={() => editScenes($, moveUp(i))} /> : <Text>   </Text>}
-            {i < r.scenes.length - 1 ? (
-              <Button key={`down-${i}`} label="↓" onPress={() => editScenes($, moveDown(i))} />
-            ) : (
-              <Text>   </Text>
-            )}
-            {r.scenes.length > 2 ? <Button key={`del-${i}`} label="✕" onPress={() => editScenes($, remove(i))} /> : null}
           </Box>
-        ))}
-        {r.isEdited ? (
+          {input?.kind === 'insert' ? (
+            <Input
+              key={`insert-input-${i}`}
+              placeholder={`在第 ${i + 1} 幕後面插一句（20 字以內）…`}
+              submitLabel="插入"
+              autoFocus
+              onSubmit={async value => {
+                const text = value.trim()
+                if (!text) return
+                if (linked) await editScript($, list => [...list.slice(0, i + 1), text, ...list.slice(i + 1)])
+                await update($, run, x => ({ ...x, openInput: null }))
+                await ask(
+                  `插入一幕：在第 ${i + 1} 幕後面插入一句「${text}」${linked ? '（script.md 已更新）' : ''}；只為這句補一幕，其他幕不動`,
+                )
+              }}
+            />
+          ) : null}
+          {input?.kind === 'redo' ? (
+            <Input
+              key={`redo-input-${i}`}
+              placeholder="想怎麼改這一幕？例如「推近到搜尋框」，留空就換個呈現方式"
+              submitLabel="重畫"
+              autoFocus
+              onSubmit={async value => {
+                await update($, run, x => ({ ...x, openInput: null }))
+                await ask(`重畫第 ${i + 1} 幕：${value.trim() || '換一個呈現方式'}；只改這一幕，腳本的字不變`)
+              }}
+            />
+          ) : null}
+        </Box>
+      )
+    }
+    const step3 = (
+      <Box flexDirection="column" gap={1}>
+        {head(
+          2,
+          '分鏡板',
+          hasBoard
+            ? `${join(r.out ?? '', 'storyboard.json')}・${r.scenes.length} 幕 ${Math.round(total)} 秒${r.isFraming ? '・產生縮圖中…' : ''}`
+            : '',
+        )}
+        {hasBoard && !linked && r.script.length > 0 ? (
+          <Box flexDirection="row" paddingLeft={3} gap={1}>
+            <Text color="warning">
+              腳本 {r.script.length} 句、分鏡 {r.scenes.length} 幕，對不上
+            </Text>
+            <Button
+              key="rebuild"
+              label="⟳ 照腳本重排分鏡"
+              variant="primary"
+              onPress={() => ask('照腳本重排：script.md 已在面板上修改，依目前的 script.md 重排分鏡表（一句一幕）')}
+            />
+          </Box>
+        ) : null}
+        {r.scenes.map(card)}
+      </Box>
+    )
+
+    // ④ 合成影片：確認分鏡板後才算
+    const canCompose = hasBoard && !r.isPicking && (r.renderedAt === null || r.isEdited)
+    const step4 = (
+      <Box flexDirection="column">
+        {head(
+          3,
+          '合成影片',
+          done[3]
+            ? `${join(r.out ?? '', 'demo.mp4')}${r.renderSeconds ? `・${r.renderSeconds} 秒` : ''} → 結果頁已打開`
+            : canCompose
+              ? '確認分鏡板後按「合成影片」'
+              : '',
+        )}
+        {canCompose ? (
           <Box paddingLeft={3}>
             <Button
-              key="rerender"
-              label="⟳ 重新算圖"
+              key="compose"
+              label="▶ 合成影片"
               variant="primary"
-              onPress={() =>
-                $.prompt.submit({ text: '重新算圖：分鏡表已在面板上修改，照目前的 storyboard.json 重跑算圖指令' })
-              }
+              onPress={() => ask('合成影片：分鏡板確認好了，照目前的 storyboard.json 算圖')}
             />
           </Box>
         ) : null}
       </Box>
-    )
-
-    // ④ 算圖
-    const step4 = head(
-      3,
-      '算圖',
-      done[3]
-        ? `${join(r.out ?? '', 'demo.mp4')}${r.renderSeconds ? `・${r.renderSeconds} 秒` : ''} → 結果頁已打開`
-        : r.isEdited
-          ? '分鏡改過了，按「重新算圖」'
-          : '',
     )
 
     return (
