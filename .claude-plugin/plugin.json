@@ -2,8 +2,17 @@
   "name": "make-demo-video",
   "version": "0.1.0",
   "description": "把 repo、網址、PDF 或一段文字變成一支 demo 影片（MP4＋GIF）：讀素材寫腳本 → 挑風格 → 排分鏡 → 算圖輸出。",
-  "author": { "name": "muchuanhung" },
+  "author": {
+    "name": "muchuanhung"
+  },
   "repository": "https://github.com/muchuanhung/make-demo-video",
   "license": "MIT",
-  "keywords": ["demo", "video", "gif", "readme", "storyboard"]
+  "keywords": [
+    "demo",
+    "video",
+    "gif",
+    "readme",
+    "storyboard"
+  ],
+  "types": "./types/index.d.ts"
 }
