@@ -1,0 +1,16 @@
+{
+  "id": "neon",
+  "name": "霓虹",
+  "description": "深紫夜色、發光的洋紅標題與格線，畫面從側邊滑入。適合活動、遊戲、想要有舞台感的開場。",
+  "colors": { "bg": "#130b24", "surface": "#1d1236", "text": "#f4eaff", "muted": "#a892cf", "accent": "#ff4fd8", "accentText": "#1a0420", "border": "#35245c" },
+  "fonts": {
+    "display": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "body": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "mono": "\"SF Mono\", Menlo, Consolas, \"PingFang TC\", monospace"
+  },
+  "radius": 10,
+  "shadow": "none",
+  "motion": { "enter": "rise", "duration": 0.35, "transition": "slide" },
+  "decor": "glow",
+  "caption": "bar"
+}

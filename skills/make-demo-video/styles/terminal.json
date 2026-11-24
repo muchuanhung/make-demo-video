@@ -1,0 +1,16 @@
+{
+  "id": "terminal",
+  "name": "終端機",
+  "description": "黑底、等寬字、綠色游標，帶掃描線，字是一格一格跳出來的。適合開發工具、CLI、技術分享。",
+  "colors": { "bg": "#0b0f0c", "surface": "#111a14", "text": "#d7f5dd", "muted": "#6f9a7a", "accent": "#3ddc84", "accentText": "#04140a", "border": "#1f3527" },
+  "fonts": {
+    "display": "\"SF Mono\", Menlo, Consolas, \"PingFang TC\", monospace",
+    "body": "\"SF Mono\", Menlo, Consolas, \"PingFang TC\", monospace",
+    "mono": "\"SF Mono\", Menlo, Consolas, \"PingFang TC\", monospace"
+  },
+  "radius": 2,
+  "shadow": "none",
+  "motion": { "enter": "step", "duration": 0.1, "transition": "cut" },
+  "decor": "scanlines",
+  "caption": "plain"
+}

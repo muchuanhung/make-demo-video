@@ -1,0 +1,6 @@
+node_modules/
+.DS_Store
+examples/*/out/
+examples/*/reel/*.html
+examples/*/reel/*.player.html
+examples/*/reel/sheet.jpg

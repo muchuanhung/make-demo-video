@@ -1,0 +1,30 @@
+{
+  "id": "screenplay",
+  "name": "紙卡劇本",
+  "description": "深藍桌面上一張微微歪斜的劇本紙，打字機字體配黃色螢光筆。適合說故事、活動預告。",
+  "colors": {
+    "backdrop": "#22324d",
+    "bg": "#faf9f4",
+    "surface": "#ffffff",
+    "text": "#1c1c1c",
+    "muted": "#6b6b6b",
+    "accent": "#ffe14d",
+    "accentText": "#1c1c1c",
+    "border": "#d9d6cb",
+    "accentInk": "#a3790a"
+  },
+  "fonts": {
+    "display": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "body": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "mono": "\"Courier New\", Courier, \"PingFang TC\", monospace"
+  },
+  "radius": 4,
+  "shadow": "0 18px 40px rgb(0 0 0 / 0.35)",
+  "motion": {
+    "enter": "rise",
+    "duration": 0.45,
+    "transition": "fade"
+  },
+  "decor": "paper",
+  "caption": "highlight"
+}

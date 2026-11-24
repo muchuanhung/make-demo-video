@@ -1,0 +1,16 @@
+{
+  "id": "studio",
+  "name": "暖白解說",
+  "description": "米白底、深灰字、珊瑚橘重點，乾淨的圓角卡片。適合產品介紹、教學、給一般大眾看的內容。",
+  "colors": { "bg": "#fcfaf7", "surface": "#ffffff", "text": "#2b2726", "muted": "#857c78", "accent": "#e2694a", "accentText": "#ffffff", "border": "#e6dfd9" },
+  "fonts": {
+    "display": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "body": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "mono": "\"SF Mono\", Menlo, Consolas, \"PingFang TC\", monospace"
+  },
+  "radius": 14,
+  "shadow": "0 10px 30px rgb(60 40 30 / 0.12)",
+  "motion": { "enter": "pop", "duration": 0.4, "transition": "fade" },
+  "decor": "none",
+  "caption": "plain"
+}

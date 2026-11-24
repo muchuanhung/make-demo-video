@@ -1,0 +1,67 @@
+{
+  "title": "weather-board：台灣天氣，一眼看完",
+  "aspect": "16:9",
+  "url": "https://github.com/muchuanhung/weather-board",
+  "scenes": [
+    {
+      "id": "hook",
+      "kind": "title",
+      "seconds": 3,
+      "kicker": "weather-board",
+      "heading": "出門前，**一眼**看完今天天氣",
+      "sub": "中央氣象署資料・Next.js・Claude 天氣小幫手"
+    },
+    {
+      "id": "home",
+      "kind": "browser",
+      "seconds": 5,
+      "address": "weather-board-liart.vercel.app",
+      "image": "shot-1.png",
+      "focus": [
+        { "at": 0, "x": 0.5, "y": 0.5, "zoom": 1 },
+        { "at": 0.5, "x": 0.3, "y": 0.45, "zoom": 1.6 },
+        { "at": 1, "x": 0.3, "y": 0.45, "zoom": 1.6 }
+      ],
+      "clicks": [{ "at": 0.35, "x": 0.13, "y": 0.2 }],
+      "caption": "現在溫度、體感、降雨機率，**一張卡片**看完"
+    },
+    {
+      "id": "hourly",
+      "kind": "browser",
+      "seconds": 4,
+      "address": "weather-board-liart.vercel.app",
+      "image": "shot-2.png",
+      "focus": [
+        { "at": 0, "x": 0.5, "y": 0.4, "zoom": 1.15 },
+        { "at": 1, "x": 0.5, "y": 0.6, "zoom": 1.15 }
+      ],
+      "caption": "往下滑，24 小時與一週預報"
+    },
+    {
+      "id": "agent",
+      "kind": "terminal",
+      "seconds": 5,
+      "name": "POST /api/agent",
+      "lines": [
+        "今天要帶傘嗎？",
+        { "type": "out", "text": "查詢臺北市 24 小時預報⋯⋯" },
+        { "type": "out", "text": "降雨機率 70%，建議帶傘。", "highlight": true }
+      ],
+      "caption": "問 Claude 天氣小幫手，它會自己去查資料"
+    },
+    {
+      "id": "points",
+      "kind": "points",
+      "seconds": 4,
+      "heading": "三個人，一週做完",
+      "items": ["後端：氣象署 API 整理成好用的格式", "前端：卡片、預報、搜尋城市", "統籌：CI、部署、**Discord 降雨推播**"]
+    },
+    {
+      "id": "outro",
+      "kind": "outro",
+      "seconds": 3,
+      "heading": "原始碼在這裡",
+      "sub": "掃描 QR code"
+    }
+  ]
+}

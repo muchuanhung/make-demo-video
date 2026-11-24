@@ -1,0 +1,17 @@
+{
+  "name": "make-demo-video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "把 repo、網址或文字變成一支 demo 影片（MP4＋GIF）",
+  "scripts": {
+    "render": "node scripts/render.mjs",
+    "capture": "node scripts/capture.mjs",
+    "reel": "node scripts/reel.mjs"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.2.0",
+    "playwright-core": "^1.49.0",
+    "qrcode": "^1.5.4"
+  }
+}

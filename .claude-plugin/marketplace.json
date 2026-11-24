@@ -1,0 +1,11 @@
+{
+  "name": "make-demo-video",
+  "owner": { "name": "muchuanhung" },
+  "plugins": [
+    {
+      "name": "make-demo-video",
+      "source": "./",
+      "description": "把 repo、網址、PDF 或一段文字變成一支 demo 影片（MP4＋GIF）。"
+    }
+  ]
+}

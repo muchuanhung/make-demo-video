@@ -1,0 +1,229 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+body {
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+#stage {
+  position: relative;
+  width: var(--w);
+  height: var(--h);
+  overflow: hidden;
+  background: var(--bg);
+  font-size: 1rem;
+  transform-origin: 0 0;
+}
+
+.scene {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+  padding: 3rem 4rem 7rem;
+}
+.scene.on { display: flex; }
+
+.step {
+  position: absolute;
+  top: 1.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.25rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 99rem;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.step b { color: var(--accent-ink); font-weight: 700; margin-right: 0.5em; }
+
+.kicker {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+}
+h1 {
+  font-family: var(--font-display);
+  font-size: 3.6rem;
+  line-height: 1.2;
+  font-weight: 800;
+  text-align: center;
+  text-wrap: balance;
+}
+h2 {
+  font-family: var(--font-display);
+  font-size: 2.3rem;
+  line-height: 1.25;
+  font-weight: 800;
+  text-align: center;
+  text-wrap: balance;
+}
+.sub { font-size: 1.35rem; color: var(--muted); text-align: center; text-wrap: balance; }
+mark { background: var(--accent); color: var(--accent-text); padding: 0 0.2em; border-radius: 0.15em; }
+
+.caption {
+  position: absolute;
+  left: 0; right: 0; bottom: 2.2rem;
+  text-align: center;
+  font-size: 1.45rem;
+  font-weight: 700;
+  padding: 0 3rem;
+}
+.caption span { display: inline-block; padding: 0.3rem 1rem; border-radius: 0.5rem; }
+body[data-caption="bar"] .caption span { background: var(--text); color: var(--bg); }
+body[data-caption="highlight"] .caption span { background: var(--accent); color: var(--accent-text); }
+
+.progress { position: absolute; left: 0; bottom: 0; height: 0.3rem; background: var(--accent); }
+
+/* 視窗：終端機、檔案、瀏覽器共用外框 */
+.win {
+  width: 100%;
+  max-width: 52rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.bar i { width: 0.65rem; height: 0.65rem; border-radius: 50%; background: var(--border); }
+.bar i:first-child { background: var(--accent); }
+.bar .name { margin-left: 0.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.body {
+  padding: 1rem 1.2rem;
+  min-height: 12rem;
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.line { min-height: 1.65em; padding: 0 0.3rem; border-radius: 0.25rem; }
+.line.cmd::before { content: "> "; color: var(--accent-ink); font-weight: 700; }
+.line.out { color: var(--muted); }
+.line.hl { background: color-mix(in srgb, var(--accent) 28%, transparent); color: var(--text); }
+.caret { display: inline-block; width: 0.55em; height: 1.05em; background: var(--accent); vertical-align: text-bottom; }
+
+/* 視窗高度要扣掉上方步驟標籤與下方字幕，寬度再由 16:9 反推，避免橫式畫面底部被切掉。 */
+.win.browser { max-width: min(56rem, calc((var(--h) - 12rem) * 16 / 9)); }
+.address {
+  flex: 1;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.8rem;
+  border-radius: 99rem;
+  background: var(--bg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewport { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: var(--bg); }
+.viewport img { position: absolute; left: 0; top: 0; width: 100%; transform-origin: 0 0; }
+.cursor {
+  position: absolute;
+  width: 1.4rem; height: 1.4rem;
+  margin: -0.7rem 0 0 -0.7rem;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 0.15rem solid var(--accent-text);
+  box-shadow: 0 0.2rem 0.6rem rgb(0 0 0 / 0.35);
+}
+.ripple {
+  position: absolute;
+  width: 5rem; height: 5rem;
+  margin: -2.5rem 0 0 -2.5rem;
+  border-radius: 50%;
+  border: 0.2rem solid var(--accent);
+}
+
+.points { display: flex; flex-direction: column; gap: 0.9rem; width: 100%; max-width: 44rem; }
+.point {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1.2rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 1.4rem;
+  font-weight: 600;
+}
+.point b {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 2.2rem; height: 2.2rem;
+  border-radius: calc(var(--radius) * 0.6);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+}
+
+.qr { width: 11rem; height: 11rem; padding: 0.6rem; background: #fff; border-radius: var(--radius); }
+.qr svg { display: block; width: 100%; height: 100%; }
+.url {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  padding: 0.4rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 99rem;
+  background: var(--surface);
+}
+
+/* 直式：字放大、留白縮小 */
+body[data-portrait] .scene { padding: 5rem 1.8rem 9rem; }
+body[data-portrait] h1 { font-size: 3rem; }
+body[data-portrait] .caption { bottom: 4rem; padding: 0 1.5rem; }
+body[data-portrait] .body { font-size: 0.95rem; }
+
+/* 裝飾：每種風格最多選一種 */
+body[data-decor="paper"] #stage { background: var(--backdrop); }
+body[data-decor="paper"] .scene {
+  inset: 2.2rem 2.6rem;
+  background: var(--bg);
+  box-shadow: var(--shadow);
+  transform: rotate(-0.8deg);
+}
+body[data-decor="paper"] .scene::before {
+  content: "";
+  position: absolute;
+  left: 1.2rem; top: 0; bottom: 0;
+  width: 0.9rem;
+  background: radial-gradient(circle, var(--backdrop) 0.4rem, transparent 0.42rem) center 18% / 100% 33% repeat-y;
+}
+body[data-decor="scanlines"] #stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgb(0 0 0 / 0.22) 0 1px, transparent 1px 4px);
+}
+body[data-decor="grid"] #stage {
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+}
+body[data-decor="glow"] h1, body[data-decor="glow"] h2, body[data-decor="glow"] .kicker {
+  text-shadow: 0 0 1.2rem color-mix(in srgb, var(--accent) 75%, transparent);
+}
+body[data-decor="glow"] .win, body[data-decor="glow"] .point {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 2.2rem color-mix(in srgb, var(--accent) 35%, transparent);
+}

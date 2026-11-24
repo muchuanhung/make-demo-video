@@ -1,0 +1,28 @@
+{
+  "id": "blueprint",
+  "name": "藍圖",
+  "description": "工程藍底配白色格線與細框，像一張設計圖。適合架構說明、流程、資料與系統類主題。",
+  "colors": {
+    "bg": "#12408f",
+    "surface": "#0f3577",
+    "text": "#f2f7ff",
+    "muted": "#a9c3ee",
+    "accent": "#ffd23f",
+    "accentText": "#0c2a5e",
+    "border": "#3a66b3"
+  },
+  "fonts": {
+    "display": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "body": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "mono": "\"SF Mono\", Menlo, Consolas, \"PingFang TC\", monospace"
+  },
+  "radius": 0,
+  "shadow": "none",
+  "motion": {
+    "enter": "rise",
+    "duration": 0.4,
+    "transition": "fade"
+  },
+  "decor": "grid",
+  "caption": "highlight"
+}
