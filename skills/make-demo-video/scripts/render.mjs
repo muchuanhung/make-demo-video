@@ -48,10 +48,22 @@ async function buildPlayer(board, style) {
 </body></html>`;
 }
 
+// 結果頁角落的「用 make-demo-video 做的」：網址取自 plugin.json 的 repository，影片本身就指向這個 repo 時不重複放。
+async function loadCredit(boardUrl) {
+  try {
+    const plugin = JSON.parse(await readFile(path.join(SKILL_DIR, "..", "..", ".claude-plugin", "plugin.json"), "utf8"));
+    const url = plugin.repository;
+    if (!url || boardUrl?.replace(/\/$/, "") === url.replace(/\/$/, "")) return null;
+    return { url, qrSvg: await QRCode.toString(url, { type: "svg", margin: 0 }) };
+  } catch {
+    return null; // 不是以 plugin 形式安裝（沒有 plugin.json）時就不放
+  }
+}
+
 function resultPage(board, style, files) {
   const c = style.colors;
   const rows = board.scenes
-    .map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.kind)}</td><td>${s.seconds}s</td><td>${escapeHtml(s.caption || s.heading || "")}</td></tr>`)
+    .map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.kind)}</td><td>${s.seconds}s</td><td>${escapeHtml((s.caption || s.heading || "").replace(/\*\*/g, ""))}</td></tr>`)
     .join("");
   return `<!doctype html>
 <html lang="zh-Hant">
@@ -71,6 +83,9 @@ function resultPage(board, style, files) {
   a { color: ${c.text}; word-break: break-all; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
   td { padding: 4px 6px; border-top: 1px solid ${c.border}; vertical-align: top; }
+  .credit { display: grid; grid-template-columns: 112px 1fr; gap: 12px; align-items: center; margin: 4px 0 8px; padding-top: 16px; border-top: 1px solid ${c.border}; font-size: 13px; }
+  .credit p { margin: 0 0 4px; color: ${c.text}; }
+  .credit .qr { padding: 6px; }
 </style>
 </head>
 <body>
@@ -81,6 +96,7 @@ function resultPage(board, style, files) {
     <p>風格：${escapeHtml(style.name || style.id)}・${board.duration.toFixed(0)} 秒・${board.width}×${board.height}</p>
     ${files.qrSvg ? `<div class="qr">${files.qrSvg}</div><p><a href="${escapeHtml(board.url)}">${escapeHtml(board.url)}</a></p>` : ""}
     <p>檔案：<a href="${files.mp4}">${files.mp4}</a>${files.gif ? `、<a href="${files.gif}">${files.gif}</a>` : ""}</p>
+    ${files.credit ? `<div class="credit"><div class="qr">${files.credit.qrSvg}</div><div><p>用 <b>make-demo-video</b> 做的</p><a href="${escapeHtml(files.credit.url)}">${escapeHtml(files.credit.url.replace(/^https?:\/\//, ""))}</a></div></div>` : ""}
     <table>${rows}</table>
   </aside>
 </main>
@@ -138,7 +154,8 @@ async function main() {
 
   const qrSvg = board.url ? await QRCode.toString(board.url, { type: "svg", margin: 0 }) : "";
   const page = path.join(outDir, `${name}.html`);
-  await writeFile(page, resultPage(board, style, { mp4: path.basename(mp4), gif: gif && path.basename(gif), qrSvg }));
+  const credit = await loadCredit(board.url);
+  await writeFile(page, resultPage(board, style, { mp4: path.basename(mp4), gif: gif && path.basename(gif), qrSvg, credit }));
 
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
   console.log(`完成，花了 ${seconds} 秒（影片 ${board.duration} 秒、${board.scenes.length} 幕、風格 ${style.id}）`);
