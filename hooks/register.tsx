@@ -28,13 +28,14 @@ const FRESH: Run = {
   isChosen: false,
   scenes: [],
   isEdited: false,
+  isScriptEdited: false,
   renderedAt: null,
   renderSeconds: null,
   note: null,
 }
 
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
-const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-2' })
+const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-3' })
 
 type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null }
 let styles: StyleInfo[] = []
@@ -169,19 +170,30 @@ async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
   const r = await read($, run)
   if (!r.out) return
   const boardPath = join(r.out, 'storyboard.json')
-  const board = JSON.parse(await $.fs.read(boardPath)) as { scenes: unknown[] }
+  const board = JSON.parse(await readText($, boardPath)) as { scenes: unknown[] }
   const before = board.scenes.length
   board.scenes = op([...board.scenes])
   await $.fs.write(boardPath, JSON.stringify(board, null, 2) + '\n')
   const scriptPath = join(r.out, 'script.md')
   if (await $.fs.exists(scriptPath)) {
-    const lines = parseScript(await $.fs.read(scriptPath))
+    const lines = parseScript(await readText($, scriptPath))
     if (lines.length === before) {
       await $.fs.write(scriptPath, op([...lines]).map((line, i) => `${i + 1}. ${line}`).join('\n') + '\n')
     }
   }
   await update($, run, x => ({ ...x, isEdited: true }))
   await refresh($)
+}
+
+/** 改腳本（上移、刪除、新增一句），寫回 script.md；分鏡表要等使用者按「照腳本重排分鏡」才改。 */
+async function editScript($: $Like, op: (list: string[]) => string[]) {
+  const r = await read($, run)
+  if (!r.out) return
+  const scriptPath = join(r.out, 'script.md')
+  const current = await readText($, scriptPath).then(parseScript, () => r.script)
+  const next = op([...current]).map(line => line.trim()).filter(Boolean)
+  await $.fs.write(scriptPath, next.map((line, i) => `${i + 1}. ${line}`).join('\n') + '\n')
+  await update($, run, x => ({ ...x, script: next, isScriptEdited: true }))
 }
 
 const moveUp = (i: number) => <T,>(list: T[]) => [...list.slice(0, i - 1), ...list.slice(i, i + 1), ...list.slice(i - 1, i), ...list.slice(i + 1)]
@@ -284,7 +296,7 @@ export const register: Register = on => {
       } else if (w.path.endsWith('storyboard.json')) {
         try {
           const scenes = toRows(JSON.parse(w.content) as { scenes?: unknown })
-          await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out, scenes }))
+          await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out, scenes, isScriptEdited: false }))
         } catch {
           await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out }))
         }
@@ -316,7 +328,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
-    const { Box, Text, Button } = els
+    const { Box, Text, Button, Input } = els
     const Image = e.surface === 'terminal' && 'Image' in els ? els.Image : null
     if (styles.length === 0) await loadStyles($)
     const r = await read($, run)
@@ -353,12 +365,43 @@ export const register: Register = on => {
     const step1 = (
       <Box flexDirection="column">
         {head(0, '腳本', done[0] ? `${join(r.out ?? '', 'script.md')}・${r.script.length} 句` : '讀素材中…')}
-        {r.script.slice(0, 8).map((line, i) => (
-          <Text dimColor wrap="truncate">
-            {'   '}
-            {i + 1}. {line}
-          </Text>
+        {r.script.map((line, i) => (
+          <Box flexDirection="row" paddingLeft={3}>
+            <Box width={Math.max(10, cols - 14)}>
+              <Text wrap="truncate">
+                {String(i + 1).padStart(2)}. {line}
+              </Text>
+            </Box>
+            {r.out && i > 0 ? <Button key={`line-up-${i}`} label="↑" onPress={() => editScript($, moveUp(i))} /> : <Text>   </Text>}
+            {r.out && r.script.length > 1 ? (
+              <Button key={`line-del-${i}`} label="✕" onPress={() => editScript($, remove(i))} />
+            ) : null}
+          </Box>
         ))}
+        {r.out && done[0] ? (
+          <Box paddingLeft={3}>
+            <Input
+              key="line-add"
+              placeholder="新增一句（20 字以內）…"
+              submitLabel="加入"
+              onSubmit={value => (value.trim() ? editScript($, list => [...list, value]) : undefined)}
+            />
+          </Box>
+        ) : null}
+        {r.isScriptEdited && r.scenes.length > 0 ? (
+          <Box paddingLeft={3}>
+            <Button
+              key="rebuild"
+              label="⟳ 照腳本重排分鏡"
+              variant="primary"
+              onPress={() =>
+                $.prompt.submit({
+                  text: '照腳本重排：script.md 已在面板上修改，依目前的 script.md 重排分鏡表（一句一幕）並重新算圖',
+                })
+              }
+            />
+          </Box>
+        ) : null}
       </Box>
     )
 

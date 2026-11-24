@@ -25,6 +25,8 @@ export type Run = {
   scenes: SceneRow[]
   /** 分鏡在面板上被改過，還沒重新算圖。 */
   isEdited: boolean
+  /** 腳本在面板上被改過，分鏡表還沒照新腳本重排。 */
+  isScriptEdited: boolean
   renderedAt: number | null
   renderSeconds: number | null
   /** 讀檔失敗等狀況的說明，面板最下方用淡色顯示，方便排查。 */

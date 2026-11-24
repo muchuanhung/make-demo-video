@@ -221,3 +221,46 @@ test('先 cd 到輸出資料夾再寫檔、或只寫檔名時，輸出資料夾�
   }
   await ui.unmount()
 })
+
+test('① 腳本可以刪除、上移、新增一句，改完出現「照腳本重排分鏡」', async ($, on) => {
+  const fs = fakeFs(on)
+  const submitted: string[] = []
+  on('clock.now', () => ({ value: fs.now() }))
+  on('command.register', () => ({ value: { command: 'demo-panel' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => {
+    submitted.push(e.text ?? '')
+    return { text: e.text ?? '' }
+  })
+  on('tool.call', () => ({ result: {} }))
+
+  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: '/make-demo-video', wait: false, origin: { kind: 'composer' } })
+  fs.put('docs/demo/script.md', '1. 甲\n2. 乙\n3. 丙\n')
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/script.md', content: '1. 甲\n2. 乙\n3. 丙\n' })
+  fs.put('docs/demo/storyboard.json', JSON.stringify(BOARD))
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
+
+  const ui = await $.ui.mount(PANE)
+  expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeFalsy()
+  await ui.press({ key: 'line-del-1' })
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 甲\n2. 丙\n')
+  await ui.redraw()
+  await ui.press({ key: 'line-up-1' })
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 丙\n2. 甲\n')
+  await ui.redraw()
+  await ui.input({ key: 'line-add', text: '  新的一句 ', kind: 'submit' })
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 丙\n2. 甲\n3. 新的一句\n')
+
+  await ui.redraw()
+  await ui.press({ key: 'rebuild' })
+  expect(submitted.at(-1)).toMatch(/^照腳本重排：/)
+
+  // Claude 照新腳本重寫分鏡表後，按鈕消失
+  await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeFalsy()
+  await ui.unmount()
+})
