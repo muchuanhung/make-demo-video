@@ -25,7 +25,7 @@ function fakeFs(on: On, failReads?: RegExp) {
     if (failReads?.test(e.path)) throw new Error('EACCES ' + e.path)
     const f = files.get(key(e.path))
     if (!f) throw new Error('ENOENT ' + e.path)
-    return { value: f.text }
+    return { value: e.as === 'bytes' ? { base64: btoa(f.text) } : f.text }
   })
   on('fs.write', (_, e) => {
     put(key(e.path), e.text)
@@ -262,5 +262,33 @@ test('① 腳本可以刪除、上移、新增一句，改完出現「照腳本�
   await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
   await ui.redraw()
   expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeFalsy()
+  await ui.unmount()
+})
+
+test('VS Code 聊天面板沒有 Image：② 改用 SVG 縮圖，內嵌 PNG，沒有 PNG 的風格只畫向量版', async ($, on) => {
+  const fs = fakeFs(on)
+  fs.put('STYLES/thumbs/studio.png', 'png-bytes')
+  on('clock.now', () => ({ value: fs.now() }))
+  on('command.register', () => ({ value: { command: 'demo-panel' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
+
+  await $.session.start({ cwd: '/repo', surface: 'vscode', isInteractive: true })
+  await $.prompt.submit({ text: '/make-demo-video', wait: false, origin: { kind: 'composer' } })
+  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['studio'] })
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect(await ui.find({ type: 'Image' })).toBeFalsy()
+  const svgs = await ui.findAll({ type: 'Svg' })
+  expect(svgs.length).toBe(2)
+  const byAlt = (alt: string) => svgs.find(found => found.props.alt === alt)
+  const studio = byAlt('暖白解說')
+  expect(studio?.props.source).toContain('data:image/png;base64,' + btoa('png-bytes'))
+  expect(studio?.props.source).toContain('#e2694a')
+  const neon = byAlt('霓虹')
+  expect(neon?.props.source).toContain('霓虹')
+  expect(neon?.props.source).not.toContain('<image')
   await ui.unmount()
 })

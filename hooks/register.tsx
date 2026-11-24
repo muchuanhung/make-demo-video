@@ -37,7 +37,31 @@ const FRESH: Run = {
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
 const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-3' })
 
-type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null }
+/** thumb：PNG 縮圖路徑（終端機用 Image 畫）；svg：VS Code、桌面版等畫面用的縮圖（它們沒有 Image，但有 Svg）。 */
+type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null; svg: string | null }
+
+const xml = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/**
+ * 風格縮圖的 SVG：先用風格的顏色畫一張向量版（小標、重點色名稱、副標，和 PNG 縮圖同一個構圖），
+ * 再把 PNG 縮圖疊在上面。畫面不讓 SVG 內嵌圖片時，至少還看得到向量版。
+ */
+function thumbSvg(style: { id: string; name: string; colors: Record<string, string>; fonts?: Record<string, string> }, pngBase64: string | null) {
+  const c = style.colors
+  const font = xml((style.fonts?.display ?? 'sans-serif').replace(/"/g, ''))
+  const name = xml(style.name)
+  const chip = Math.min(140, 30 + style.name.length * 22)
+  return [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90" width="160" height="90">',
+    `<rect width="160" height="90" rx="6" fill="${xml(c.backdrop ?? c.bg ?? '#000')}"/>`,
+    `<text x="80" y="27" text-anchor="middle" font-family="${font}" font-size="7" letter-spacing="1" fill="${xml(c.accentInk ?? c.accent ?? '#888')}">${xml(style.id.toUpperCase())}</text>`,
+    `<rect x="${80 - chip / 2}" y="33" width="${chip}" height="24" rx="4" fill="${xml(c.accent ?? '#888')}"/>`,
+    `<text x="80" y="50.5" text-anchor="middle" font-family="${font}" font-size="16" font-weight="700" fill="${xml(c.accentText ?? c.text ?? '#fff')}">${name}</text>`,
+    `<text x="80" y="71" text-anchor="middle" font-family="${font}" font-size="7" fill="${xml(c.muted ?? c.text ?? '#888')}">demo 影片</text>`,
+    pngBase64 ? `<image href="data:image/png;base64,${pngBase64}" width="160" height="90" preserveAspectRatio="xMidYMid slice"/>` : '',
+    '</svg>',
+  ].join('')
+}
 let styles: StyleInfo[] = []
 
 type $Like = EngineInterface
@@ -75,18 +99,28 @@ async function loadStyles($: $Like) {
   for (const entry of await $.fs.list(dir).catch(() => [])) {
     if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
     try {
-      const style = JSON.parse(await $.fs.read(`${dir}/${entry.name}`)) as {
+      const style = JSON.parse(await readText($, `${dir}/${entry.name}`)) as {
         id: string
         name?: string
         colors: Record<string, string>
+        fonts?: Record<string, string>
       }
       const c = style.colors
-      const thumb = `${dir}/thumbs/${style.id}.png`
+      const thumbPath = `${dir}/thumbs/${style.id}.png`
+      const thumb = (await $.fs.exists(thumbPath)) ? thumbPath : null
+      // PNG 只在載入時讀一次；之後每次重畫都用同一段 SVG 文字
+      const png = thumb
+        ? await ($.fs.read(thumb, { as: 'bytes' }) as Promise<unknown>).then(
+            v => (v as { base64?: string }).base64 ?? null,
+            () => null,
+          )
+        : null
       found.push({
         id: style.id,
         name: style.name ?? style.id,
         swatch: [c.backdrop ?? c.bg, c.surface, c.text, c.accent].filter((x): x is string => Boolean(x)),
-        thumb: (await $.fs.exists(thumb)) ? thumb : null,
+        thumb,
+        svg: thumbSvg({ ...style, name: style.name ?? style.id }, png),
       })
     } catch {
       // 壞掉的風格檔不擋面板，算圖時 render.mjs 會指出錯在哪
@@ -330,6 +364,7 @@ export const register: Register = on => {
     const els = $.ui.resolve(e)
     const { Box, Text, Button, Input } = els
     const Image = e.surface === 'terminal' && 'Image' in els ? els.Image : null
+    const Svg = 'Svg' in els ? els.Svg : null
     if (styles.length === 0) await loadStyles($)
     const r = await read($, run)
     const cols = Math.max(24, e.props.bodyColumns ?? 40)
@@ -367,7 +402,7 @@ export const register: Register = on => {
         {head(0, '腳本', done[0] ? `${join(r.out ?? '', 'script.md')}・${r.script.length} 句` : '讀素材中…')}
         {r.script.map((line, i) => (
           <Box flexDirection="row" paddingLeft={3}>
-            <Box width={Math.max(10, cols - 14)}>
+            <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate">
                 {String(i + 1).padStart(2)}. {line}
               </Text>
@@ -412,7 +447,7 @@ export const register: Register = on => {
     const perRow = Math.max(2, Math.min(6, Math.floor((cols - 3) / (cellCols + 1))))
     const options = [
       ...styles,
-      { id: CUSTOM, name: '從素材定義', swatch: [] as string[], thumb: null },
+      { id: CUSTOM, name: '從素材定義', swatch: [] as string[], thumb: null, svg: null },
     ]
     const rows: (typeof options)[] = []
     for (let i = 0; i < options.length; i += perRow) rows.push(options.slice(i, i + perRow))
@@ -422,6 +457,8 @@ export const register: Register = on => {
         <Box flexDirection="column" width={cellCols} marginRight={1}>
           {Image && s.thumb ? (
             <Image key={`thumb-${s.id}`} source={{ file: s.thumb, format: 'png' }} columns={cellCols} rows={4} alt={s.name} />
+          ) : Svg && s.svg ? (
+            <Svg source={s.svg} alt={s.name} width={112} height={63} />
           ) : (
             <Text dimColor>{s.id === CUSTOM ? '  取網站色彩' : ' '}</Text>
           )}
@@ -494,13 +531,12 @@ export const register: Register = on => {
 
     // ③ 分鏡：上移、刪除、重新算圖
     const total = r.scenes.reduce((sum, s) => sum + s.seconds, 0)
-    const labelCols = Math.max(8, cols - 30)
     const step3 = (
       <Box flexDirection="column">
         {head(2, '分鏡', done[2] ? `${join(r.out ?? '', 'storyboard.json')}・${r.scenes.length} 幕 ${Math.round(total)} 秒` : '')}
         {r.scenes.map((s, i) => (
           <Box flexDirection="row" paddingLeft={3}>
-            <Box width={labelCols + 16}>
+            <Box flexGrow={1} flexShrink={1}>
               <Text wrap="truncate">
                 {String(i + 1).padStart(2)} <Text dimColor>{s.kind.padEnd(8)}</Text> {String(s.seconds).padStart(3)}s {s.label}
               </Text>
