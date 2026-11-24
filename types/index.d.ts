@@ -27,6 +27,8 @@ export type Run = {
   isEdited: boolean
   renderedAt: number | null
   renderSeconds: number | null
+  /** 讀檔失敗等狀況的說明，面板最下方用淡色顯示，方便排查。 */
+  note: string | null
 }
 
 declare module 'claude-code' {

@@ -30,10 +30,11 @@ const FRESH: Run = {
   isEdited: false,
   renderedAt: null,
   renderSeconds: null,
+  note: null,
 }
 
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
-const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-1' })
+const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-2' })
 
 type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null }
 let styles: StyleInfo[] = []
@@ -94,28 +95,60 @@ async function loadStyles($: $Like) {
   styles = found.sort((a, b) => rank(a.id) - rank(b.id))
 }
 
-/** 從輸出資料夾重讀 script.md 與 storyboard.json；比這次開始時間舊的分鏡表不算。 */
+/** $.fs.read 的結果一律轉成文字（預設就是文字；保險起見也處理 bytes）。 */
+async function readText($: $Like, path: string): Promise<string> {
+  const value = (await $.fs.read(path)) as unknown
+  if (typeof value === 'string') return value
+  const base64 = (value as { base64?: string } | null)?.base64
+  if (typeof base64 === 'string') return new TextDecoder().decode((Uint8Array as unknown as { fromBase64(b: string): Uint8Array }).fromBase64(base64))
+  throw new Error(`讀到的不是文字（${typeof value}）`)
+}
+
+const reason = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 160)
+
+/** 從輸出資料夾重讀 script.md 與 storyboard.json；讀不到就保留目前內容，並把原因記在 note。 */
 async function refresh($: $Like) {
   const r = await read($, run)
   if (!r.isActive || !r.out) return
-  const script = await $.fs
-    .read(join(r.out, 'script.md'))
-    .then(parseScript, () => [] as string[])
-  let scenes = r.scenes
-  let aspect = r.choice.aspect
+  const patch: Partial<Run> = {}
+  const notes: string[] = []
+  const scriptPath = join(r.out, 'script.md')
+  if (await $.fs.exists(scriptPath).catch(() => false)) {
+    try {
+      const script = parseScript(await readText($, scriptPath))
+      if (script.length) patch.script = script
+    } catch (err) {
+      notes.push(`讀不到 ${scriptPath}：${reason(err)}`)
+    }
+  }
   const boardPath = join(r.out, 'storyboard.json')
   const stat = await $.fs.stat(boardPath).catch(() => null)
   if (stat && stat.mtimeMs >= r.startedAt) {
     try {
-      const board = JSON.parse(await $.fs.read(boardPath)) as { scenes?: unknown; aspect?: string }
-      scenes = toRows(board)
-      if (board.aspect === '9:16' || board.aspect === '16:9') aspect = board.aspect
-    } catch {
-      // 寫到一半或格式還不對，下一次工具呼叫再讀
+      const board = JSON.parse(await readText($, boardPath)) as { scenes?: unknown; aspect?: string }
+      patch.scenes = toRows(board)
+      if (board.aspect === '9:16' || board.aspect === '16:9') patch.choice = { ...r.choice, aspect: board.aspect }
+    } catch (err) {
+      notes.push(`讀不到 ${boardPath}：${reason(err)}`)
     }
   }
-  await update($, run, x => ({ ...x, script, scenes, choice: { ...x.choice, aspect } }))
+  await update($, run, x => ({ ...x, ...patch, note: notes.length ? notes.join('；') : null }))
 }
+
+/** 工具呼叫裡直接寫出的檔案：Write 的 file_path＋content，或 Bash 的 cat > 檔案 <<'EOF' … EOF。 */
+function writesIn(e: unknown): { path: string; content: string }[] {
+  const x = e as { tool?: string; file_path?: unknown; content?: unknown; command?: unknown }
+  if (x.tool === 'Write' && typeof x.file_path === 'string' && typeof x.content === 'string') {
+    return [{ path: x.file_path, content: x.content }]
+  }
+  if (x.tool !== 'Bash' || typeof x.command !== 'string') return []
+  const found: { path: string; content: string }[] = []
+  const heredoc = /cat\s*>\s*["']?([^\s"'<>]+)["']?\s*<<-?\s*["']?(\w+)["']?[^\n]*\n([\s\S]*?)\n\2(?:\n|$)/g
+  for (const m of x.command.matchAll(heredoc)) found.push({ path: m[1] ?? '', content: m[3] ?? '' })
+  return found
+}
+
+const dirOf = (path: string) => path.replace(/\/[^/]*$/, '') || '.'
 
 async function start($: $Like) {
   const now = await $.clock.now()
@@ -235,8 +268,22 @@ export const register: Register = on => {
       if (e.tool !== 'Skill' || !skill.includes('make-demo-video')) return ran
       await start($)
     }
+    // 先用工具呼叫裡寫出的內容更新（不必等讀檔），輸出資料夾也以實際寫入的位置為準
+    for (const w of writesIn(e)) {
+      if (w.path.endsWith('script.md')) {
+        const script = parseScript(w.content)
+        await update($, run, x => ({ ...x, out: dirOf(w.path), script: script.length ? script : x.script }))
+      } else if (w.path.endsWith('storyboard.json')) {
+        try {
+          const scenes = toRows(JSON.parse(w.content) as { scenes?: unknown })
+          await update($, run, x => ({ ...x, out: dirOf(w.path), scenes }))
+        } catch {
+          await update($, run, x => ({ ...x, out: dirOf(w.path) }))
+        }
+      }
+    }
     const blob = JSON.stringify(e)
-    if (!r.out) {
+    if (!(await read($, run)).out) {
       const m = blob.match(/([\w.~/-]*\/)?(?:script\.md|storyboard\.json)/)
       if (m) await update($, run, x => ({ ...x, out: (m[1] ?? '').replace(/\/+$/, '') || '.' }))
     }
@@ -290,7 +337,7 @@ export const register: Register = on => {
         <Text color={done[i] ? 'success' : i === current ? 'warning' : 'inactive'}>
           {done[i] ? '✔' : i === current ? '●' : '○'}
         </Text>{' '}
-        <Text bold={i === current}>{'①②③④'[i]} {title}</Text> <Text dimColor>{detail}</Text>
+        <Text bold={i === current}>{i + 1}. {title}</Text> <Text dimColor>{detail}</Text>
       </Text>
     )
 
@@ -443,6 +490,7 @@ export const register: Register = on => {
         {step2}
         {step3}
         {step4}
+        {r.note ? <Text dimColor>⚠ {r.note}</Text> : null}
       </Box>
     )
   })

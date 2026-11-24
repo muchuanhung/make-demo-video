@@ -9,7 +9,8 @@ const STYLES: Record<string, object> = {
   neon: { id: 'neon', name: '霓虹', colors: { bg: '#120b1f', surface: '#1c1230', text: '#f5eaff', accent: '#ff3ea5' } },
 }
 
-function fakeFs(on: On) {
+/** failReads：路徑符合時讀取失敗，模擬實機上讀不到檔案。 */
+function fakeFs(on: On, failReads?: RegExp) {
   const files = new Map<string, { text: string; mtimeMs: number }>()
   let clock = 1_000
   const put = (path: string, text: string) => files.set(path, { text, mtimeMs: (clock += 10) })
@@ -21,6 +22,7 @@ function fakeFs(on: On) {
   const key = (path: string) =>
     path.replace(/^.*\/skills\/make-demo-video\/styles/, 'STYLES').replace(/^.*\/(docs\/demo\/)/, '$1')
   on('fs.read', (_, e) => {
+    if (failReads?.test(e.path)) throw new Error('EACCES ' + e.path)
     const f = files.get(key(e.path))
     if (!f) throw new Error('ENOENT ' + e.path)
     return { value: f.text }
@@ -156,5 +158,38 @@ test('終端機上 ② 顯示風格縮圖，沒有縮圖的風格只畫色票', 
   expect(thumb?.props.alt).toBe('暖白解說')
   expect(await ui.find({ type: 'Button', key: 'style-neon' })).toBeTruthy()
   expect(await ui.find({ type: 'Button', key: 'style-custom' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('Bash 一次寫出 script.md 和 storyboard.json、讀檔又失敗時，面板仍從指令內容顯示，並註明讀不到的原因', async ($, on) => {
+  const fs = fakeFs(on, /demo-syntax/)
+  on('clock.now', () => ({ value: fs.now() }))
+  on('command.register', () => ({ value: { command: 'demo-panel' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
+  on('tool.call', () => ({ result: { stdout: '' } }))
+
+  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: '/make-demo-video https://syntax.sammics.cc', wait: false, origin: { kind: 'composer' } })
+  // 檔案在磁碟上存在，但讀取失敗（模擬實機上讀不到的情況）
+  fs.put('/abs/docs/demo-syntax/script.md', 'x')
+  const command = [
+    "cat > /abs/docs/demo-syntax/script.md <<'EOF'",
+    '1. 練習寫程式，每次都留下足跡',
+    '2. 按下分析，看你用了哪些語法',
+    '3. Syntax Atlas，我的語法足跡',
+    'EOF',
+    "cat > /abs/docs/demo-syntax/storyboard.json <<'EOF'",
+    JSON.stringify({ scenes: [{ kind: 'title', seconds: 4, heading: 'a' }, { kind: 'browser', seconds: 7, caption: 'b' }, { kind: 'outro', seconds: 4, heading: 'c' }] }),
+    'EOF',
+  ].join('\n')
+  await $.tool.call({ tool: 'Bash', command })
+
+  const ui = await $.ui.mount(PANE)
+  expect((await ui.find({ type: 'Text', text: /script\.md・3 句/ }))?.text).toContain('/abs/docs/demo-syntax/script.md')
+  expect((await ui.find({ type: 'Text', text: /3 幕 15 秒/ }))?.text).toContain('storyboard.json')
+  expect((await ui.find({ type: 'Text', text: /讀不到/ }))?.text).toContain('demo-syntax/script.md')
   await ui.unmount()
 })
