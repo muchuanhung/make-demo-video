@@ -7,7 +7,7 @@ import { once } from "node:events";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import QRCode from "qrcode";
-import { SKILL_DIR, parseArgs, loadStyle, loadStoryboard, launchBrowser, escapeHtml } from "./lib.mjs";
+import { SKILL_DIR, parseArgs, loadStyle, loadStoryboard, launchBrowser, escapeHtml, buildPlayer } from "./lib.mjs";
 
 const args = parseArgs(process.argv.slice(2), ["no-gif", "no-open"]);
 if (!args.storyboard || !args.style) {
@@ -30,23 +30,6 @@ function run(cmd, cmdArgs) {
   });
 }
 
-async function buildPlayer(board, style) {
-  const [css, js] = await Promise.all([
-    readFile(path.join(SKILL_DIR, "player/player.css"), "utf8"),
-    readFile(path.join(SKILL_DIR, "player/player.js"), "utf8"),
-  ]);
-  const qrSvg = board.url ? await QRCode.toString(board.url, { type: "svg", margin: 0 }) : "";
-  const data = { ...board, style, qrSvg };
-  // </script> 出現在資料裡會提前結束 script 區塊，所以把 < 跳脫掉。
-  const json = JSON.stringify(data).replace(/</g, "\\u003c");
-  return `<!doctype html>
-<html lang="zh-Hant">
-<head><meta charset="utf-8"><title>${escapeHtml(board.title || "demo")}</title><style>${css}</style></head>
-<body><div id="stage"></div>
-<script>window.__DATA__ = ${json};</script>
-<script>${js}</script>
-</body></html>`;
-}
 
 // 結果頁角落的「用 make-demo-video 做的」：網址取自 plugin.json 的 repository，影片本身就指向這個 repo 時不重複放。
 async function loadCredit(boardUrl) {

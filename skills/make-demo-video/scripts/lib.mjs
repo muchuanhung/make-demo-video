@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import QRCode from "qrcode";
 
 export const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const STYLES_DIR = path.join(SKILL_DIR, "styles");
@@ -98,4 +99,23 @@ export async function launchBrowser() {
 
 export function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+}
+
+// 播放器頁面：分鏡表與風格內嵌在 HTML 裡，render.mjs 算影片、frames.mjs 算分鏡縮圖都用它。
+export async function buildPlayer(board, style) {
+  const [css, js] = await Promise.all([
+    readFile(path.join(SKILL_DIR, "player/player.css"), "utf8"),
+    readFile(path.join(SKILL_DIR, "player/player.js"), "utf8"),
+  ]);
+  const qrSvg = board.url ? await QRCode.toString(board.url, { type: "svg", margin: 0 }) : "";
+  const data = { ...board, style, qrSvg };
+  // </script> 出現在資料裡會提前結束 script 區塊，所以把 < 跳脫掉。
+  const json = JSON.stringify(data).replace(/</g, "\\u003c");
+  return `<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><title>${escapeHtml(board.title || "demo")}</title><style>${css}</style></head>
+<body><div id="stage"></div>
+<script>window.__DATA__ = ${json};</script>
+<script>${js}</script>
+</body></html>`;
 }
