@@ -144,11 +144,19 @@ function writesIn(e: unknown): { path: string; content: string }[] {
   if (x.tool !== 'Bash' || typeof x.command !== 'string') return []
   const found: { path: string; content: string }[] = []
   const heredoc = /cat\s*>\s*["']?([^\s"'<>]+)["']?\s*<<-?\s*["']?(\w+)["']?[^\n]*\n([\s\S]*?)\n\2(?:\n|$)/g
-  for (const m of x.command.matchAll(heredoc)) found.push({ path: m[1] ?? '', content: m[3] ?? '' })
+  for (const m of x.command.matchAll(heredoc)) {
+    // 指令前面先 cd 到別的資料夾時（cd docs/demo && cat > storyboard.json …），相對路徑要接上那個資料夾
+    const before = x.command.slice(0, m.index)
+    const cd = [...before.matchAll(/(?:^|[;&|\n]\s*)cd\s+["']?([^\s"';&|]+)["']?/g)].at(-1)?.[1]
+    const raw = m[1] ?? ''
+    const path = raw.startsWith('/') || !cd ? raw : join(cd, raw)
+    found.push({ path, content: m[3] ?? '' })
+  }
   return found
 }
 
-const dirOf = (path: string) => path.replace(/\/[^/]*$/, '') || '.'
+/** 檔案所在的資料夾；只有檔名、看不出資料夾時回傳 null（沿用目前的輸出資料夾）。 */
+const dirOf = (path: string): string | null => (path.includes('/') ? path.replace(/\/[^/]*$/, '') || '/' : null)
 
 async function start($: $Like) {
   const now = await $.clock.now()
@@ -272,13 +280,13 @@ export const register: Register = on => {
     for (const w of writesIn(e)) {
       if (w.path.endsWith('script.md')) {
         const script = parseScript(w.content)
-        await update($, run, x => ({ ...x, out: dirOf(w.path), script: script.length ? script : x.script }))
+        await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out, script: script.length ? script : x.script }))
       } else if (w.path.endsWith('storyboard.json')) {
         try {
           const scenes = toRows(JSON.parse(w.content) as { scenes?: unknown })
-          await update($, run, x => ({ ...x, out: dirOf(w.path), scenes }))
+          await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out, scenes }))
         } catch {
-          await update($, run, x => ({ ...x, out: dirOf(w.path) }))
+          await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out }))
         }
       }
     }

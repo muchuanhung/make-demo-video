@@ -193,3 +193,31 @@ test('Bash 一次寫出 script.md 和 storyboard.json、讀檔又失敗時，面
   expect((await ui.find({ type: 'Text', text: /讀不到/ }))?.text).toContain('demo-syntax/script.md')
   await ui.unmount()
 })
+
+test('先 cd 到輸出資料夾再寫檔、或只寫檔名時，輸出資料夾不會被當成檔名', async ($, on) => {
+  const fs = fakeFs(on)
+  on('clock.now', () => ({ value: fs.now() }))
+  on('command.register', () => ({ value: { command: 'demo-panel' } }))
+  on('tool.register', () => ({ value: { tool: 'mcp__make-demo-video__show_options' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('prompt.submit', (_, e) => ({ text: e.text ?? '' }))
+  on('tool.call', () => ({ result: { stdout: '完成，花了 11.7 秒' } }))
+
+  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
+  await $.prompt.submit({ text: '/make-demo-video', wait: false, origin: { kind: 'composer' } })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/docs/demo-kinutabi/script.md', content: '1. 甲\n2. 乙\n3. 丙\n' })
+  const board = JSON.stringify({ scenes: [{ kind: 'title', seconds: 3, heading: '甲' }, { kind: 'outro', seconds: 3, heading: '丙' }] })
+  await $.tool.call({ tool: 'Bash', command: `cd docs/demo-kinutabi && cat > storyboard.json <<'EOF'\n${board}\nEOF` })
+  await $.tool.call({ tool: 'Bash', command: `cat > storyboard.json <<'EOF'\n${board}\nEOF` })
+  await $.tool.call({ tool: 'Bash', command: 'node render.mjs --storyboard docs/demo-kinutabi/storyboard.json --style studio' })
+
+  const ui = await $.ui.mount(PANE)
+  // 之前的 bug：輸出資料夾被記成 storyboard.json，畫面出現 storyboard.json/script.md
+  for (const [pattern, file] of [[/script\.md・3 句/, 'script.md'], [/2 幕 6 秒/, 'storyboard.json'], [/demo\.mp4/, 'demo.mp4']] as const) {
+    const text = (await ui.find({ type: 'Text', text: pattern }))?.text ?? ''
+    expect(text).toContain(`docs/demo-kinutabi/${file}`)
+    expect(text).not.toContain('storyboard.json/')
+  }
+  await ui.unmount()
+})
