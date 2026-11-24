@@ -123,7 +123,8 @@ body[data-caption="highlight"] .caption span { background: var(--accent); color:
 .caret { display: inline-block; width: 0.55em; height: 1.05em; background: var(--accent); vertical-align: text-bottom; }
 
 /* 視窗高度要扣掉上方步驟標籤與下方字幕，寬度再由 16:9 反推，避免橫式畫面底部被切掉。 */
-.win.browser { max-width: min(56rem, calc((var(--h) - 12rem) * 16 / 9)); }
+/* --ratio 是截圖的寬高比（player.js 在圖片載入後設定），手機截圖就會是直的視窗。 */
+.win.browser { --ratio: 1.7778; max-width: min(56rem, calc((var(--h) - 12rem) * var(--ratio))); }
 .address {
   flex: 1;
   margin-left: 0.5rem;
@@ -134,7 +135,7 @@ body[data-caption="highlight"] .caption span { background: var(--accent); color:
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.viewport { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: var(--bg); }
+.viewport { position: relative; width: 100%; aspect-ratio: var(--ratio); overflow: hidden; background: var(--bg); }
 .viewport img { position: absolute; left: 0; top: 0; width: 100%; transform-origin: 0 0; }
 .cursor {
   position: absolute;
@@ -191,7 +192,14 @@ body[data-caption="highlight"] .caption span { background: var(--accent); color:
 body[data-portrait] .scene { padding: 5rem 1.8rem 9rem; }
 body[data-portrait] h1 { font-size: 3rem; }
 body[data-portrait] .caption { bottom: 4rem; padding: 0 1.5rem; }
-body[data-portrait] .body { font-size: 0.95rem; }
+/* 直式影片多半在手機上看，終端機、檔案、重點幕的字要比橫式大。 */
+body[data-portrait] .body { font-size: 1.35rem; min-height: 16rem; padding: 1.4rem 1.4rem; }
+body[data-portrait] .bar { font-size: 1rem; }
+body[data-portrait] h2 { font-size: 2.6rem; }
+body[data-portrait] .point { font-size: 1.7rem; padding: 1.2rem 1.3rem; }
+body[data-portrait] .points { gap: 1.2rem; }
+/* 直式的瀏覽器幕：扣掉上下留白與網址列，讓直的截圖盡量撐滿高度。 */
+body[data-portrait] .win.browser { max-width: min(100%, calc((var(--h) - 16rem) * var(--ratio))); }
 
 /* 裝飾：每種風格最多選一種 */
 body[data-decor="paper"] #stage { background: var(--backdrop); }

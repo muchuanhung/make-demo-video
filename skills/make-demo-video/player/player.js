@@ -218,6 +218,10 @@
     document.fonts.ready,
     ...[...document.images].map((img) => img.decode().catch(() => {})),
   ]).then(() => {
+    // 瀏覽器幕的視窗比例跟著截圖走：橫的截圖是橫視窗，手機截圖是直視窗。
+    for (const s of scenes) for (const a of s.anims) {
+      if (a.kind === "browser" && a.img.naturalWidth) a.view.parentNode.style.setProperty("--ratio", String(a.img.naturalWidth / a.img.naturalHeight));
+    }
     window.seek(0);
     if (new URLSearchParams(location.search).has("still")) return;
     if (!navigator.webdriver) {
