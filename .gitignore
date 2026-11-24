@@ -6,3 +6,4 @@ examples/*/reel/*.player.html
 examples/*/reel/sheet.jpg
 examples/*/reel/*.mp4
 !examples/*/reel/reel.mp4
+examples/*/backup/
