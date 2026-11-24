@@ -37,6 +37,8 @@ cd <本 skill 的資料夾> && [ -d node_modules ] || npm install --no-fund --no
 | 網站網址 | 網頁抓取讀文字，再用 `node <skill>/scripts/capture.mjs <網址> --out <out> --shots 2` 截圖 |
 | PDF、文章、一段文字 | 直接讀，整理成重點 |
 
+`<out>` 裡已經有 `shot-*.png` 時直接沿用，不要重新截圖（使用者可能先備好畫面，避開網路不穩或線上資料空白）。截圖後先看圖；畫面上的數字是 `--`、空白或載入中時，告訴使用者，不要把那一塊當成推近重點。
+
 寫出 4–7 句腳本，一句對應一幕。原則：
 
 - 第一句是「看的人得到什麼」，不是產品名稱。
@@ -67,7 +69,7 @@ cd <本 skill 的資料夾> && [ -d node_modules ] || npm install --no-fund --no
 node <skill>/scripts/render.mjs --storyboard <out>/storyboard.json --style <風格 id 或 style.json 的路徑> --out <out>
 ```
 
-完成後會印出 MP4、GIF、結果頁的路徑，並在 macOS 上自動打開結果頁。告訴使用者：
+完成後會印出 MP4、GIF、結果頁的路徑，並在 macOS 上自動打開結果頁。算圖成功就直接回報，不要再抽格、截圖或讀影片檢查（render.mjs 已經驗過分鏡表，使用者正在看結果頁）。告訴使用者：
 
 1. 檔案在哪裡、花了幾秒。
 2. 要放進 README 的寫法：`[![demo](docs/demo/demo.gif)](<網址>)`。
