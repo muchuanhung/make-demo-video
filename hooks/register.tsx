@@ -1,6 +1,7 @@
 // make-demo-video 的四步進度面板：跟著 ① 腳本 → ② 風格 → ③ 分鏡板 → ④ 合成影片 前進。
 // - ① 腳本在分鏡板出現前可以直接改；之後收成一行，改動都在分鏡卡上做。
 // - ② 由 Claude 呼叫 show_options 展開：風格縮圖、比例、秒數、幕數，按「確定」把選擇當成下一則訊息送出。
+//   選完可以按「重新選」：只換風格時面板自己重算縮圖；改了比例、秒數或幕數才請 Claude 重排。
 // - ③ 分鏡板：每張卡是「一句腳本＋這一幕的縮圖」。↑ ↓ ✕ 直接改 storyboard.json 與 script.md；
 //   ＋ 插一句、⟳ 重畫這一幕交給 Claude 只改那一幕。分鏡表一變，面板自己跑 frames.mjs 重算縮圖（約 1 秒）。
 // - ④ 使用者確認分鏡板後按「合成影片」才算整支影片。
@@ -38,10 +39,11 @@ const FRESH: Run = {
   framesAt: null,
   isFraming: false,
   openInput: null,
+  pickedFrom: null,
 }
 
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
-const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-4' })
+const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-5' })
 
 /** thumb：PNG 縮圖路徑（終端機用 Image 畫）；svg：VS Code、桌面版等畫面用的縮圖（它們沒有 Image，但有 Svg）。 */
 type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null; svg: string | null }
@@ -200,11 +202,21 @@ async function start($: $Like) {
 
 const absolute = (path: string) => (path.startsWith('/') || !cwd ? path : join(cwd, path))
 
+/** 給 frames.mjs／render.mjs 的 --style：內建風格用 id，從素材定義的用輸出資料夾裡的 style.json。 */
+const styleArg = (r: Run) => (r.choice.style === CUSTOM && r.out ? join(r.out, 'style.json') : r.choice.style)
+
+/** render.mjs 指令裡的 --style 換回面板的風格代號。 */
+function styleFromArg(arg: string): string {
+  const base = arg.replace(/^.*\//, '')
+  if (!base.endsWith('.json')) return base
+  return base === 'style.json' ? CUSTOM : base.replace(/\.json$/, '')
+}
+
 /** 跑 frames.mjs 重算分鏡縮圖。失敗不擋流程，原因記在 note。 */
 async function regenFrames($: $Like) {
   const r = await read($, run)
   if (!r.out || r.scenes.length === 0) return
-  const style = r.choice.style === CUSTOM ? join(r.out, 'style.json') : r.choice.style
+  const style = styleArg(r)
   await update($, run, x => ({ ...x, isFraming: true }))
   let note: string | null = null
   let ok = false
@@ -261,6 +273,29 @@ async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
     const lines = parseScript(await readText($, scriptPath))
     if (lines.length === before) {
       await $.fs.write(scriptPath, op([...lines]).map((line, i) => `${i + 1}. ${line}`).join('\n') + '\n')
+    }
+  }
+  await update($, run, x => ({ ...x, isEdited: true, openInput: null }))
+  await refresh($)
+  await regenFrames($)
+}
+
+/** 改第 i 句的字：寫回 script.md（一句一幕時）與這一幕的字幕（title／outro 是 heading，其他是 caption）。 */
+async function editLine($: $Like, i: number, text: string) {
+  const r = await read($, run)
+  if (!r.out || !text) return
+  const boardPath = join(r.out, 'storyboard.json')
+  const board = JSON.parse(await readText($, boardPath)) as { scenes: Record<string, unknown>[] }
+  const scene = board.scenes[i]
+  if (!scene) return
+  scene[scene.kind === 'title' || scene.kind === 'outro' ? 'heading' : 'caption'] = text
+  await $.fs.write(boardPath, JSON.stringify(board, null, 2) + '\n')
+  const scriptPath = join(r.out, 'script.md')
+  if (await $.fs.exists(scriptPath)) {
+    const lines = parseScript(await readText($, scriptPath))
+    if (lines.length === board.scenes.length) {
+      lines[i] = text
+      await $.fs.write(scriptPath, lines.map((line, n) => `${n + 1}. ${line}`).join('\n') + '\n')
     }
   }
   await update($, run, x => ({ ...x, isEdited: true, openInput: null }))
@@ -375,6 +410,7 @@ export const register: Register = on => {
     }
     // 先用工具呼叫裡寫出的內容更新（不必等讀檔），輸出資料夾也以實際寫入的位置為準
     let wroteBoard = false
+    let styleChanged = false
     for (const w of writesIn(e)) {
       if (w.path.endsWith('script.md')) {
         const script = parseScript(w.content)
@@ -406,20 +442,24 @@ export const register: Register = on => {
       const output = JSON.stringify((ran as { result?: unknown }).result ?? '')
       const took = output.match(/花了 ([\d.]+) 秒/)
       const style = command.match(/--style\s+["']?([^\s"']+)/)
+      const used = style ? styleFromArg(style[1] ?? '') : null
+      const before = (await read($, run)).choice.style
       const now = await $.clock.now()
       await update($, run, x => ({
         ...x,
         renderedAt: took ? now : x.renderedAt,
         renderSeconds: took ? Number(took[1]) : x.renderSeconds,
         isEdited: took ? false : x.isEdited,
-        isChosen: x.isChosen || Boolean(style),
-        choice: style && !x.isChosen ? { ...x.choice, style: (style[1] ?? '').replace(/^.*\/|\.json$/g, '') } : x.choice,
+        isChosen: x.isChosen || Boolean(used),
+        choice: used ? { ...x.choice, style: used } : x.choice,
       }))
+      // 風格換了（例如使用者在對話裡說「換成霓虹」），分鏡縮圖也換成新風格
+      if (used && used !== before) styleChanged = true
     }
     await refresh($)
     // Claude 改了分鏡表（含 Edit 工具）：重算分鏡縮圖。process.run 等待的時間不算進這個 hook 的時間預算。
     const touchedBoard = wroteBoard || (e.tool === 'Edit' && String((e as unknown as { file_path?: string }).file_path ?? '').endsWith('storyboard.json'))
-    if (touchedBoard) await regenFrames($)
+    if (touchedBoard || styleChanged) await regenFrames($)
     return ran
   }).catch(($, e, next) => next(e))
 
@@ -544,11 +584,27 @@ export const register: Register = on => {
     )
     const confirm = async () => {
       const x = await read($, run)
-      await update($, run, y => ({ ...y, isChosen: true, isPicking: false }))
-      await $.prompt.submit({
-        text: `② 選好了：風格 ${styleLabel(x.choice.style)}、比例 ${x.choice.aspect}、約 ${x.choice.seconds} 秒、${x.choice.scenes} 幕`,
-      })
+      const was = x.pickedFrom
+      const now = x.choice
+      await update($, run, y => ({ ...y, isChosen: true, isPicking: false, pickedFrom: null }))
+      const summary = `風格 ${styleLabel(now.style)}、比例 ${now.aspect}、約 ${now.seconds} 秒、${now.scenes} 幕`
+      if (!was || x.scenes.length === 0) {
+        await $.prompt.submit({ text: `② 選好了：${summary}` })
+        return
+      }
+      const replan = was.aspect !== now.aspect || was.seconds !== now.seconds || was.scenes !== now.scenes
+      if (replan) {
+        await $.prompt.submit({
+          text: `② 改選：${summary}（原本 ${was.aspect}、約 ${was.seconds} 秒、${was.scenes} 幕）；照新設定重排分鏡表`,
+        })
+      } else if (was.style !== now.style) {
+        // 只換風格：分鏡表不用動，面板自己用新風格重算縮圖；合成影片的訊息會帶上新風格
+        await update($, run, y => ({ ...y, isEdited: y.renderedAt !== null ? true : y.isEdited }))
+        await regenFrames($)
+      }
     }
+    const repick = () =>
+      update($, run, x => ({ ...x, isPicking: true, isChosen: false, pickedFrom: x.choice, openInput: null }))
     const step2 = (
       <Box flexDirection="column">
         {head(
@@ -557,9 +613,16 @@ export const register: Register = on => {
           done[1] || r.isChosen
             ? `${styleLabel(c.style)}・${c.aspect}・${c.seconds} 秒・${c.scenes} 幕`
             : pick
-              ? '請選擇，按「確定」'
+              ? r.pickedFrom
+                ? '重新選，按「確定」'
+                : '請選擇，按「確定」'
               : '',
         )}
+        {r.isChosen && !pick ? (
+          <Box paddingLeft={3}>
+            <Button key="repick" label="↺ 重新選" onPress={repick} />
+          </Box>
+        ) : null}
         {pick ? (
           <Box flexDirection="column" paddingLeft={3}>
             {rows.map((row, ri) => (
@@ -636,6 +699,11 @@ export const register: Register = on => {
                   onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'insert' ? null : { kind: 'insert' as const, index: i } }))}
                 />
                 <Button
+                  key={`edit-${i}`}
+                  label="✎ 改字"
+                  onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'edit' ? null : { kind: 'edit' as const, index: i } }))}
+                />
+                <Button
                   key={`redo-${i}`}
                   label="⟳ 重畫"
                   onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'redo' ? null : { kind: 'redo' as const, index: i } }))}
@@ -658,6 +726,16 @@ export const register: Register = on => {
                   `插入一幕：在第 ${i + 1} 幕後面插入一句「${text}」${linked ? '（script.md 已更新）' : ''}；只為這句補一幕，其他幕不動`,
                 )
               }}
+            />
+          ) : null}
+          {input?.kind === 'edit' ? (
+            <Input
+              key={`edit-input-${i}`}
+              value={line}
+              placeholder="這一句改成…"
+              submitLabel="改好了"
+              autoFocus
+              onSubmit={value => editLine($, i, value.trim())}
             />
           ) : null}
           {input?.kind === 'redo' ? (
@@ -720,7 +798,7 @@ export const register: Register = on => {
               key="compose"
               label="▶ 合成影片"
               variant="primary"
-              onPress={() => ask('合成影片：分鏡板確認好了，照目前的 storyboard.json 算圖')}
+              onPress={() => ask(`合成影片：分鏡板確認好了，照目前的 storyboard.json、用風格 ${styleArg(r)} 算圖`)}
             />
           </Box>
         ) : null}

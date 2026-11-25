@@ -35,8 +35,10 @@ export type Run = {
   framesAt: number | null
   /** 正在產生分鏡縮圖。 */
   isFraming: boolean
-  /** 分鏡卡下方打開的輸入框：在第 index 幕後插一句，或重畫第 index 幕。 */
-  openInput: { kind: 'insert' | 'redo'; index: number } | null
+  /** 分鏡卡下方打開的輸入框：在第 index 幕後插一句、重畫第 index 幕，或改第 index 句的字。 */
+  openInput: { kind: 'insert' | 'redo' | 'edit'; index: number } | null
+  /** 按「重新選」時的原設定；確定後拿來比對改了哪些項目。 */
+  pickedFrom: Choice | null
 }
 
 declare module 'claude-code' {

@@ -358,3 +358,98 @@ test('分鏡板出現前，① 腳本可以刪除、上移、下移、新增一�
   expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeFalsy()
   await ui.unmount()
 })
+
+/** 走到分鏡板：② 選霓虹 16:9 30 秒 4 幕，Claude 寫好腳本與分鏡表。 */
+async function toBoard($: Engine, fs: ReturnType<typeof fakeFs>, ui: { redraw: () => Promise<void>; press: (target: { key: string }) => Promise<unknown> }) {
+  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['neon'], scenes: 4, seconds: 30 })
+  await ui.redraw()
+  await ui.press({ key: 'confirm' })
+  await writeBoth($, fs)
+  await ui.redraw()
+}
+
+test('② 重新選：只換風格時面板自己重算縮圖、不打擾 Claude；合成影片的訊息帶上新風格', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted, runs } = engine(on, fs, { toolStdout: '完成，花了 10 秒' })
+  await begin($)
+  const ui = await $.ui.mount(PANE)
+  await toBoard($, fs, ui)
+  await $.tool.call({ tool: 'Bash', command: 'node render.mjs --storyboard docs/demo/storyboard.json --style neon --out docs/demo' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'compose' })).toBeFalsy()
+
+  const asked = submitted.length
+  await ui.press({ key: 'repick' })
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /重新選，按「確定」/ }))?.text).toBeTruthy()
+  await ui.press({ key: 'style-studio' })
+  await ui.press({ key: 'confirm' })
+  expect(submitted.length).toBe(asked)
+  const frames = runs.at(-1)!
+  expect(frames[frames.indexOf('--style') + 1]).toBe('studio')
+
+  await ui.redraw()
+  await ui.press({ key: 'compose' })
+  expect(submitted.at(-1)).toBe('合成影片：分鏡板確認好了，照目前的 storyboard.json、用風格 studio 算圖')
+  await ui.unmount()
+})
+
+test('② 重新選：改了比例、秒數或幕數，請 Claude 照新設定重排', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted } = engine(on, fs)
+  await begin($)
+  const ui = await $.ui.mount(PANE)
+  await toBoard($, fs, ui)
+  await ui.press({ key: 'repick' })
+  await ui.redraw()
+  await ui.press({ key: 'aspect-9:16' })
+  await ui.press({ key: 'sec-15' })
+  await ui.press({ key: 'confirm' })
+  expect(submitted.at(-1)).toBe('② 改選：風格 霓虹（neon）、比例 9:16、約 15 秒、4 幕（原本 16:9、約 30 秒、4 幕）；照新設定重排分鏡表')
+  await ui.unmount()
+})
+
+test('分鏡卡改字：直接寫回腳本與字幕（title 改 heading、其他改 caption），不經過 Claude', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted, runs } = engine(on, fs)
+  await begin($)
+  await writeBoth($, fs)
+  const ui = await $.ui.mount(PANE)
+  const asked = submitted.length
+  const ran = runs.length
+
+  await ui.press({ key: 'edit-1' })
+  const field = await ui.find({ type: 'Input', key: 'edit-input-1' })
+  expect(field?.props.value).toBe('選縣市')
+  await ui.input({ key: 'edit-input-1', text: ' 選縣市，馬上看到天氣 ', kind: 'submit' })
+  await ui.redraw()
+  await ui.press({ key: 'edit-0' })
+  await ui.input({ key: 'edit-input-0', text: '台灣天氣一頁看完', kind: 'submit' })
+
+  const board = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text) as { scenes: Record<string, string>[] }
+  expect(board.scenes[1]?.caption).toBe('選縣市，馬上看到天氣')
+  expect(board.scenes[0]?.heading).toBe('台灣天氣一頁看完')
+  expect(fs.files.get('docs/demo/script.md')!.text).toBe('1. 台灣天氣一頁看完\n2. 選縣市，馬上看到天氣\n3. 三個重點\n4. 打開就能用\n')
+  expect(submitted.length).toBe(asked)
+  expect(runs.length).toBe(ran + 2)
+  await ui.unmount()
+})
+
+test('Claude 用別的風格算圖時（例如使用者在對話裡說換風格），面板跟著換，縮圖也重算', async ($, on) => {
+  const fs = fakeFs(on)
+  const { runs } = engine(on, fs, { toolStdout: '完成，花了 9 秒' })
+  await begin($)
+  const ui = await $.ui.mount(PANE)
+  await toBoard($, fs, ui)
+
+  await $.tool.call({ tool: 'Bash', command: 'node render.mjs --storyboard docs/demo/storyboard.json --style studio --out docs/demo' })
+  expect(runs.at(-1)![runs.at(-1)!.indexOf('--style') + 1]).toBe('studio')
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /暖白解說（studio）/ }))?.text).toBeTruthy()
+
+  await $.tool.call({ tool: 'Bash', command: 'node render.mjs --storyboard docs/demo/storyboard.json --style docs/demo/style.json --out docs/demo' })
+  expect(runs.at(-1)![runs.at(-1)!.indexOf('--style') + 1]).toBe('docs/demo/style.json')
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /從素材定義風格/ }))?.text).toBeTruthy()
+  await ui.unmount()
+})
