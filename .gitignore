@@ -8,3 +8,5 @@ examples/*/reel/*.mp4
 !examples/*/reel/reel.mp4
 examples/*/backup/
 docs/demo*/
+docs/worklog/
+examples/muchuan-reference/sample_reference.mp4
