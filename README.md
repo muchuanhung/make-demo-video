@@ -1,84 +1,64 @@
 # make-demo-video
 
-一個 Claude Code skill：把 repo、網址、PDF 或一段文字變成一支 demo 影片（MP4＋GIF，可以直接放進 README）。
+English | [繁體中文](/README.zh-TW.md)
 
-![五種內建風格](examples/weather-board/reel/reel.gif)
+A Claude Code skill and mod that turns a repo, a URL, a PDF or a piece of text into a demo video (MP4 + GIF, ready for a README) in a few minutes:
 
-## 安裝
+- **Skill**: `/make-demo-video` reads the material, writes a script, lays out a storyboard, then renders it frame by frame in a browser and joins the frames with ffmpeg.
+- **Mod**: a progress pane next to the chat. Pick a style, see a thumbnail of every scene, adjust the storyboard, and press 合成影片 (Render) when it looks right.
 
-```text
-/plugin marketplace add muchuanhung/make-demo-video
-/plugin install make-demo-video@make-demo-video
-```
+![One /make-demo-video run in VS Code: script, style picked in the pane, storyboard adjusted, video rendered](examples/skill-flow/skill-flow.gif)
 
-需要 Node 18 以上與 Google Chrome。第一次使用時 skill 會自己裝好相依套件，ffmpeg 已附在套件裡。
+The demo is an HTML reconstruction, not a screen recording: the waits are shortened (a real run takes about a minute to write the script and about 20 seconds to render), and the chat panel is drawn simpler than the real one. The scene thumbnails and the video on the result page were really rendered by this tool. Source in [`examples/skill-flow/`](examples/skill-flow/).
 
-## 使用
+### How it works
 
-在 Claude Code 裡說：
-
-```text
-/make-demo-video 把這個 repo 做成 README 用的 demo 影片
-/make-demo-video https://example.com 做一支 20 秒的直式介紹影片
-```
-
-## 怎麼運作
-
-跟大多數影音生成工具一樣分四步，每一步都可以單獨改：
-
-| 步驟 | 做什麼 | 產出 |
+| Step | What happens | Output |
 |---|---|---|
-| ① 腳本 | Claude 讀素材，寫出 4–7 句腳本 | 對話裡的腳本 |
-| ② 風格 | 挑內建風格，或讓 Claude 從素材取色定義一個 | `style.json`（自訂時） |
-| ③ 分鏡 | 一句一幕，決定秒數、畫面、字幕、推近與點擊 | `storyboard.json` |
-| ④ 算圖 | 瀏覽器逐格算圖，ffmpeg 合成 | `demo.mp4`、`demo.gif`、結果頁 |
+| ① Script | Claude reads the material and writes one line per scene | `script.md` |
+| ② Style | Pick a built-in style, aspect, length and scene count in the pane, or take colours from the material | `style.json` (custom only) |
+| ③ Storyboard | Move, delete, reword or redo single scenes on the board | `storyboard.json` |
+| ④ Render | Render once you confirm | `demo.mp4`, `demo.gif`, result page |
 
-影片是「分鏡表 ＋ 風格」算出來的，不是錄螢幕。所以：
+The video is computed from storyboard + style, not recorded: change a caption or swap the style and it re-renders in about 20 seconds; the storyboard is plain text you can commit and review.
 
-- 改一句字幕或換一個風格，重跑一行指令，大約 20 秒。
-- 分鏡表是純文字，可以 commit、diff、code review。
-- 每一格都是時間的純函式，同樣的輸入每次算出一樣的影片。
-
-## 內建風格
-
-| id | 名稱 | 適合 |
-|---|---|---|
-| `screenplay` | 紙卡劇本 | 說故事、活動預告 |
-| `studio` | 暖白解說 | 產品介紹、教學 |
-| `terminal` | 終端機 | 開發工具、技術分享 |
-| `neon` | 霓虹 | 活動、舞台感開場 |
-| `blueprint` | 藍圖 | 架構、流程、系統 |
-
-分鏡表與風格檔的格式見 [`skills/make-demo-video/SKILL.md`](skills/make-demo-video/SKILL.md)，範例見 [`examples/weather-board/`](examples/weather-board/)。
-
-## 進度面板（mod）
-
-安裝 plugin 後，跑 `/make-demo-video` 時會在對話旁邊打開一個面板，跟著 ① 腳本 → ② 風格 → ③ 分鏡板 → ④ 合成影片 前進：
-
-- ① 腳本在分鏡板出現前可以逐句上移、下移、刪除、新增。
-- ② 用面板選風格（縮圖＋色票）、比例（16:9／9:16）、秒數與幕數。
-- ③ 分鏡板：每張卡是一句腳本加上這一幕的縮圖（`scripts/frames.mjs` 每幕截一格，約 1 秒）。上移、下移、刪除直接改檔案；「插一句」「重畫」交給 Claude 只改那一幕。
-- ④ 確認分鏡板後按「合成影片」才算整支影片。
-- 縮圖在 VS Code 的 Claude 聊天面板與支援 kitty graphics 的終端機（Ghostty、kitty）看得到；其他終端機只顯示色票。
-- 沒有面板的環境（例如 `claude -p`）會改用對話框問同樣四件事。
-
-## 開發
-
-新增或修改 `skills/make-demo-video/styles/` 的風格檔後，重算面板用的縮圖：
+### Install
 
 ```bash
-cd skills/make-demo-video
-node scripts/thumbs.mjs          # 重算縮圖，更新 styles/thumbs/manifest.json
-node scripts/thumbs.mjs --check  # 只檢查：有風格缺縮圖或改過沒重算，就列出來並失敗
+claude plugin marketplace add muchuanhung/make-demo-video
+claude plugin install make-demo-video@make-demo-video --scope user
 ```
 
-面板（`hooks/register.tsx`）的測試與檢查，在 repo 根目錄跑：
+Sessions started after the install load it. Needs Node 18 or later and Google Chrome; ffmpeg ships with the package.
+
+### Use
+
+```text
+/make-demo-video turn this repo into a demo video for the README
+/make-demo-video https://example.com make a 20-second vertical intro video
+```
+
+The pane shows thumbnails in the VS Code Claude chat panel and in terminals with kitty graphics (Ghostty, kitty). Where there is no pane (for example `claude -p`), the same questions are asked in a dialog.
+
+The pane's UI is in Traditional Chinese only.
+
+### Tested
+
+On macOS only; no promise for other platforms or later Claude Code versions.
+
+- VS Code Claude chat panel (Claude Code 2.1.331): a 9:16, 9-scene video from a URL, steps ① to ④ all driven from the pane.
+- `claude -p`: options, redoing one scene and inserting one scene produced the expected results.
+- Material: weather-board, 發發菜單, Kinutabi, Syntax Atlas, muchuan-portfolio; both 16:9 and 9:16.
+- Not tested: the pane in a terminal, Linux, Windows.
+
+### Checks
 
 ```bash
-claude plugin test .
 claude plugin validate .
+claude plugin test .
+node skills/make-demo-video/scripts/thumbs.mjs --check
 ```
 
-## 授權
+### License
 
-MIT
+MIT, see [LICENSE](/LICENSE).
