@@ -7,8 +7,8 @@ import { once } from "node:events";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import QRCode from "qrcode";
-import { SKILL_DIR, parseArgs, loadStyle, loadStoryboard, launchBrowser, escapeHtml, buildPlayer, formatWarnings } from "./lib.mjs";
-import { SHOTS } from "./shots.mjs";
+import { SKILL_DIR, parseArgs, loadStyle, loadStoryboard, launchBrowser, buildPlayer, formatWarnings } from "./lib.mjs";
+import { resultPage } from "./result-page.mjs";
 
 const args = parseArgs(process.argv.slice(2), ["no-gif", "no-open"]);
 if (!args.storyboard || !args.style) {
@@ -42,49 +42,6 @@ async function loadCredit(boardUrl) {
   } catch {
     return null; // 不是以 plugin 形式安裝（沒有 plugin.json）時就不放
   }
-}
-
-function resultPage(board, style, files) {
-  const c = style.colors;
-  const rows = board.raw
-    .map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.shot ? SHOTS[s.shot]?.label ?? s.shot : s.kind)}</td><td>${board.rows[i]?.seconds ?? s.seconds}s</td><td>${escapeHtml((s.heading || s.caption || "").replace(/\*\*/g, "").replace(/\n/g, ""))}</td></tr>`)
-    .join("");
-  return `<!doctype html>
-<html lang="zh-Hant">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(board.title || "demo")}</title>
-<style>
-  body { margin: 0; padding: 32px 16px; background: ${c.backdrop || c.bg}; color: ${c.text}; font-family: ${style.fonts.body}; }
-  main { max-width: 1100px; margin: 0 auto; display: grid; gap: 24px; grid-template-columns: minmax(0, 3fr) minmax(220px, 1fr); align-items: start; }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
-  video { width: 100%; max-height: 80vh; background: #000; border-radius: ${style.radius}px; border: 1px solid ${c.border}; }
-  aside { background: ${c.surface}; border: 1px solid ${c.border}; border-radius: ${style.radius}px; padding: 20px; }
-  h1 { font-size: 22px; margin: 0 0 4px; }
-  p { margin: 4px 0 12px; color: ${c.muted}; font-size: 14px; }
-  .qr { background: #fff; padding: 10px; border-radius: 8px; }
-  .qr svg { display: block; width: 100%; height: auto; }
-  a { color: ${c.text}; word-break: break-all; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
-  td { padding: 4px 6px; border-top: 1px solid ${c.border}; vertical-align: top; }
-  .credit { display: grid; grid-template-columns: 112px 1fr; gap: 12px; align-items: center; margin: 4px 0 8px; padding-top: 16px; border-top: 1px solid ${c.border}; font-size: 13px; }
-  .credit p { margin: 0 0 4px; color: ${c.text}; }
-  .credit .qr { padding: 6px; }
-</style>
-</head>
-<body>
-<main>
-  <video src="${files.mp4}" autoplay loop muted playsinline controls></video>
-  <aside>
-    <h1>${escapeHtml(board.title || "demo")}</h1>
-    <p>風格：${escapeHtml(style.name || style.id)}・${board.duration.toFixed(0)} 秒・${board.width}×${board.height}</p>
-    ${files.qrSvg ? `<div class="qr">${files.qrSvg}</div><p><a href="${escapeHtml(board.url)}">${escapeHtml(board.url)}</a></p>` : ""}
-    <p>檔案：<a href="${files.mp4}">${files.mp4}</a>${files.gif ? `、<a href="${files.gif}">${files.gif}</a>` : ""}</p>
-    ${files.credit ? `<div class="credit"><div class="qr">${files.credit.qrSvg}</div><div><p>用 <b>make-demo-video</b> 做的</p><a href="${escapeHtml(files.credit.url)}">${escapeHtml(files.credit.url.replace(/^https?:\/\//, ""))}</a></div></div>` : ""}
-    <table>${rows}</table>
-  </aside>
-</main>
-</body></html>`;
 }
 
 async function main() {
@@ -128,10 +85,11 @@ async function main() {
   }
 
   let gif = null;
+  let gifWidth = null;
   if (!args["no-gif"]) {
     gif = path.join(outDir, `${name}.gif`);
     // README 動圖的預設尺寸：橫式 640 寬、直式 360 寬（12 秒約 3–5 MB）
-    const width = Math.min(board.width, Number(args["gif-width"] || (board.portrait ? 360 : 640)));
+    const width = gifWidth = Math.min(board.width, Number(args["gif-width"] || (board.portrait ? 360 : 640)));
     const gifFps = Number(args["gif-fps"] || 12);
     // stats_mode=diff、diff_mode=rectangle：調色盤以會動的部分為主、每格只重畫有變的區塊，檔案小一成、畫質不變。
     await run(ffmpegPath, [
@@ -144,7 +102,11 @@ async function main() {
   const qrSvg = board.url ? await QRCode.toString(board.url, { type: "svg", margin: 0 }) : "";
   const page = path.join(outDir, `${name}.html`);
   const credit = await loadCredit(board.url);
-  await writeFile(page, resultPage(board, style, { mp4: path.basename(mp4), gif: gif && path.basename(gif), qrSvg, credit }));
+  await writeFile(page, resultPage(board, style, {
+    mp4: path.basename(mp4), mp4Bytes: (await stat(mp4)).size,
+    gif: gif && path.basename(gif), gifBytes: gif && (await stat(gif)).size, gifWidth,
+    qrSvg, credit,
+  }));
 
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
   console.log(`完成，花了 ${seconds} 秒（影片 ${board.duration} 秒、${board.raw.length} 幕、風格 ${style.id}）`);
