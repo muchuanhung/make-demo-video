@@ -13,3 +13,6 @@ examples/*/sample_reference.mp4
 examples/muchuan-reference/
 examples/*/frames/
 !examples/skill-flow/frames/
+docs/talk/
+examples/muchuan-portfolio/
+examples/opening-reel/

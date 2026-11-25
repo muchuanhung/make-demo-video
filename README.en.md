@@ -48,7 +48,7 @@ On macOS only; no promise for other platforms or later Claude Code versions.
 
 - VS Code Claude chat panel (Claude Code 2.1.331): a 9:16, 9-scene video from a URL, steps ① to ④ all driven from the pane.
 - `claude -p`: options, redoing one scene and inserting one scene produced the expected results.
-- Material: weather-board, 發發菜單, Kinutabi, Syntax Atlas, muchuan-portfolio; both 16:9 and 9:16.
+- Material: weather-board, 發發菜單, Kinutabi, Syntax Atlas; both 16:9 and 9:16.
 - Not tested: the pane in a terminal, Linux, Windows.
 
 ### Checks

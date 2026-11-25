@@ -46,7 +46,7 @@ claude plugin install make-demo-video@make-demo-video --scope user
 
 - VS Code 的 Claude 聊天面板（Claude Code 2.1.331）：從網址做一支 9:16、9 幕的影片，① 到 ④ 全程用面板操作。
 - `claude -p`：選項、重畫一幕、插入一幕都照預期產出。
-- 素材：weather-board、發發菜單、Kinutabi、Syntax Atlas、muchuan-portfolio；16:9 與 9:16 都算過。
+- 素材：weather-board、發發菜單、Kinutabi、Syntax Atlas；16:9 與 9:16 都算過。
 - 沒測過：終端機裡的面板畫面、Linux、Windows。
 
 ### 檢查
