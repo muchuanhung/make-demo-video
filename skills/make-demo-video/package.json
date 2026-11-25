@@ -7,7 +7,8 @@
   "scripts": {
     "render": "node scripts/render.mjs",
     "capture": "node scripts/capture.mjs",
-    "reel": "node scripts/reel.mjs"
+    "reel": "node scripts/reel.mjs",
+    "test": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
     "ffmpeg-static": "^5.2.0",

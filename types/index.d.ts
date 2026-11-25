@@ -5,8 +5,11 @@ export type Aspect = '16:9' | '9:16'
 /** 使用者在 ② 選的設定；style 是內建風格 id，或 "custom"（從素材定義風格）。 */
 export type Choice = { style: string; aspect: Aspect; seconds: number; scenes: number }
 
-/** 分鏡表裡的一幕，面板只需要這幾個欄位。 */
+/** 分鏡表裡的一幕，面板只需要這幾個欄位。kind 是鏡頭模板的中文名稱（用模板時）或幕別。 */
 export type SceneRow = { kind: string; seconds: number; label: string }
+
+/** 分鏡自動檢查的提醒（frames.mjs 寫的 frames/lint.json）；row 是第幾幕（0 起算），null 是整支影片。 */
+export type LintNote = { row: number | null; message: string }
 
 export type Run = {
   /** 這次是否在跑 /make-demo-video；沒在跑時面板只顯示提示。 */
@@ -35,6 +38,8 @@ export type Run = {
   framesAt: number | null
   /** 正在產生分鏡縮圖。 */
   isFraming: boolean
+  /** 分鏡自動檢查的提醒，顯示在對應的分鏡卡上。 */
+  lint: LintNote[]
   /** 分鏡卡下方打開的輸入框：在第 index 幕後插一句、重畫第 index 幕，或改第 index 句的字。 */
   openInput: { kind: 'insert' | 'redo' | 'edit'; index: number } | null
   /** 按「重新選」時的原設定；確定後拿來比對改了哪些項目。 */

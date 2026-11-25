@@ -5,19 +5,20 @@
 // - ③ 分鏡板：每張卡是「一句腳本＋這一幕的縮圖」。↑ ↓ ✕ 直接改 storyboard.json 與 script.md；
 //   ＋ 插一句、⟳ 重畫這一幕交給 Claude 只改那一幕。分鏡表一變，面板自己跑 frames.mjs 重算縮圖（約 1 秒）。
 // - ④ 使用者確認分鏡板後按「合成影片」才算整支影片。
-// 進度從 Claude 的工具呼叫認出來（寫了 script.md、storyboard.json，跑了 render.mjs），不靠 Claude 回報。
+// 進度從 Claude 的工具呼叫認出來（寫了 script.md、storyboard.json，跑了 check.mjs、render.mjs），不靠 Claude 回報。
+// 沿用上一次留下的分鏡表時 Claude 不會寫檔，所以跑 check.mjs 檢查它也算進到 ③。
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Aspect, Choice, Run, SceneRow } from '../types'
+import type { Aspect, Choice, LintNote, Run, SceneRow } from '../types'
 
 const PLUGIN = 'make-demo-video'
 const PANE = 'make-demo-video'
 const TOOL_NAME = 'show_options'
 const TOOL = `mcp__${PLUGIN}__${TOOL_NAME}`
-const SECONDS = [15, 30, 45, 60]
+const SECONDS = [12, 15, 30, 45, 60]
 const MIN_SCENES = 3
-const MAX_SCENES = 8
+const MAX_SCENES = 12 // 跟 SKILL.md 的幕數範圍（3–12）一致
 const STYLE_ORDER = ['screenplay', 'studio', 'terminal', 'neon', 'blueprint']
 const CUSTOM = 'custom'
 
@@ -38,12 +39,13 @@ const FRESH: Run = {
   note: null,
   framesAt: null,
   isFraming: false,
+  lint: [],
   openInput: null,
   pickedFrom: null,
 }
 
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
-const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-5' })
+const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-6' })
 
 /** thumb：PNG 縮圖路徑（終端機用 Image 畫）；svg：VS Code、桌面版等畫面用的縮圖（它們沒有 Image，但有 Svg）。 */
 type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null; svg: string | null }
@@ -82,14 +84,30 @@ function parseScript(text: string): string[] {
     .filter(Boolean)
 }
 
-function toRows(board: { scenes?: unknown }): SceneRow[] {
+/** 鏡頭模板的中文名稱與預設拍數（跟 skills/make-demo-video/scripts/shots.mjs 的 SHOTS 一致）。 */
+const SHOTS: Record<string, { label: string; beats: number }> = {
+  hook: { label: '開場標語', beats: 3 },
+  intro: { label: '介紹', beats: 5 },
+  card: { label: '作品卡', beats: 3 },
+  toggle: { label: '狀態切換', beats: 4 },
+  feature: { label: '功能標註', beats: 5 },
+  content: { label: '內容頁', beats: 4 },
+  cta: { label: '號召行動', beats: 3 },
+  outro: { label: '結尾', beats: 5 },
+}
+
+function toRows(board: { scenes?: unknown; beat?: unknown }): SceneRow[] {
   const scenes = Array.isArray(board.scenes) ? board.scenes : []
+  const beat = Number(board.beat) || 0.4
   return scenes.map(raw => {
     const s = (raw ?? {}) as Record<string, unknown>
     const items = Array.isArray(s.items) ? s.items.map(plain).join('、') : ''
+    const shot = typeof s.shot === 'string' ? s.shot : null
+    // 用模板時秒數多半沒寫，照拍數換算
+    const seconds = Number(s.seconds) || (shot ? (Number(s.beats) || SHOTS[shot]?.beats || 0) * beat : 0)
     return {
-      kind: String(s.kind ?? '?'),
-      seconds: Number(s.seconds) || 0,
+      kind: shot ? SHOTS[shot]?.label ?? shot : String(s.kind ?? '?'),
+      seconds: Math.round(seconds * 10) / 10,
       label: plain(s.caption || s.heading || items || s.name || ''),
     }
   })
@@ -142,8 +160,11 @@ async function readText($: $Like, path: string): Promise<string> {
 
 const reason = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 160)
 
-/** 從輸出資料夾重讀 script.md 與 storyboard.json；讀不到就保留目前內容，並把原因記在 note。 */
-async function refresh($: $Like) {
+/**
+ * 從輸出資料夾重讀 script.md 與 storyboard.json；讀不到就保留目前內容，並把原因記在 note。
+ * 分鏡表平常只讀這次開始後才改過的（上一次留下的不算數）；adopt 為真時表示 Claude 決定沿用它，不看修改時間。
+ */
+async function refresh($: $Like, adopt = false) {
   const r = await read($, run)
   if (!r.isActive || !r.out) return
   const patch: Partial<Run> = {}
@@ -159,7 +180,7 @@ async function refresh($: $Like) {
   }
   const boardPath = join(r.out, 'storyboard.json')
   const stat = await $.fs.stat(boardPath).catch(() => null)
-  if (stat && stat.mtimeMs >= r.startedAt) {
+  if (stat && (adopt || stat.mtimeMs >= r.startedAt)) {
     try {
       const board = JSON.parse(await readText($, boardPath)) as { scenes?: unknown; aspect?: string }
       patch.scenes = toRows(board)
@@ -189,6 +210,15 @@ function writesIn(e: unknown): { path: string; content: string }[] {
     found.push({ path, content: m[3] ?? '' })
   }
   return found
+}
+
+/** Bash 指令跑 check.mjs 時檢查的分鏡表路徑（先 cd 到別的資料夾時接上那個資料夾）；沒跑 check.mjs 回傳 null。 */
+function checkedBoard(command: string): string | null {
+  const m = command.match(/check\.mjs[^\n;&|]*?--storyboard\s+["']?([^\s"';&|]+)/)
+  if (!m || m.index === undefined) return null
+  const raw = m[1] ?? ''
+  const cd = [...command.slice(0, m.index).matchAll(/(?:^|[;&|\n]\s*)cd\s+["']?([^\s"';&|]+)["']?/g)].at(-1)?.[1]
+  return raw.startsWith('/') || !cd ? raw : join(cd, raw)
 }
 
 /** 檔案所在的資料夾；只有檔名、看不出資料夾時回傳 null（沿用目前的輸出資料夾）。 */
@@ -239,8 +269,27 @@ async function regenFrames($: $Like) {
   } catch (err) {
     note = `分鏡縮圖產生失敗：${reason(err)}`
   }
+  // frames.mjs 順便做了分鏡自動檢查，結果在 frames/lint.json
+  let lint: LintNote[] | null = null
+  if (ok) {
+    try {
+      const parsed = JSON.parse(await readText($, join(r.out, 'frames/lint.json'))) as unknown
+      lint = Array.isArray(parsed) ? (parsed as LintNote[]).filter(w => typeof w?.message === 'string') : []
+    } catch {
+      lint = []
+    }
+  }
   const now = await $.clock.now()
-  await update($, run, x => ({ ...x, isFraming: false, framesAt: ok ? now : x.framesAt, note: note ?? x.note }))
+  await update($, run, x => ({ ...x, isFraming: false, framesAt: ok ? now : x.framesAt, lint: lint ?? x.lint, note: note ?? x.note }))
+}
+
+/** 這次還沒算過縮圖，或分鏡表在上次算縮圖之後又改過（例如用 sed 改、面板認不出來）。 */
+async function framesStale($: $Like): Promise<boolean> {
+  const r = await read($, run)
+  if (!r.out) return false
+  if (r.framesAt === null) return true
+  const stat = await $.fs.stat(join(r.out, 'storyboard.json')).catch(() => null)
+  return Boolean(stat && stat.mtimeMs > r.framesAt)
 }
 
 /** 第 n 幕縮圖的 SVG（VS Code 聊天面板等沒有 Image 的畫面用）。 */
@@ -280,7 +329,7 @@ async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
   await regenFrames($)
 }
 
-/** 改第 i 句的字：寫回 script.md（一句一幕時）與這一幕的字幕（title／outro 是 heading，其他是 caption）。 */
+/** 改第 i 句的字：寫回 script.md（一句一幕時）與這一幕的字幕（用鏡頭模板、title／outro 是 heading；phone／card 沒有 caption 時也是 heading；其他是 caption）。 */
 async function editLine($: $Like, i: number, text: string) {
   const r = await read($, run)
   if (!r.out || !text) return
@@ -288,7 +337,8 @@ async function editLine($: $Like, i: number, text: string) {
   const board = JSON.parse(await readText($, boardPath)) as { scenes: Record<string, unknown>[] }
   const scene = board.scenes[i]
   if (!scene) return
-  scene[scene.kind === 'title' || scene.kind === 'outro' ? 'heading' : 'caption'] = text
+  const big = Boolean(scene.shot) || scene.kind === 'title' || scene.kind === 'outro' || ((scene.kind === 'phone' || scene.kind === 'card') && !scene.caption)
+  scene[big ? 'heading' : 'caption'] = text
   await $.fs.write(boardPath, JSON.stringify(board, null, 2) + '\n')
   const scriptPath = join(r.out, 'script.md')
   if (await $.fs.exists(scriptPath)) {
@@ -456,10 +506,20 @@ export const register: Register = on => {
       // 風格換了（例如使用者在對話裡說「換成霓虹」），分鏡縮圖也換成新風格
       if (used && used !== before) styleChanged = true
     }
-    await refresh($)
+    // Claude 跑 check.mjs 檢查輸出資料夾裡的分鏡表：就算這次沒寫過它（沿用上一次留下的），也當成這次的分鏡板
+    let adopted = false
+    const checked = e.tool === 'Bash' ? checkedBoard(command) : null
+    if (checked) {
+      const dir = dirOf(checked) ?? '.'
+      const out = (await read($, run)).out
+      const same = (a: string) => absolute(a.replace(/^\.\/+/, '')).replace(/\/+$/, '')
+      if (!out) await update($, run, x => ({ ...x, out: dir }))
+      adopted = !out || same(dir) === same(out)
+    }
+    await refresh($, adopted)
     // Claude 改了分鏡表（含 Edit 工具）：重算分鏡縮圖。process.run 等待的時間不算進這個 hook 的時間預算。
     const touchedBoard = wroteBoard || (e.tool === 'Edit' && String((e as unknown as { file_path?: string }).file_path ?? '').endsWith('storyboard.json'))
-    if (touchedBoard || styleChanged) await regenFrames($)
+    if (touchedBoard || styleChanged || (adopted && (await framesStale($)))) await regenFrames($)
     return ran
   }).catch(($, e, next) => next(e))
 
@@ -689,6 +749,13 @@ export const register: Register = on => {
                 {i + 1} ・ {s.kind} ・ {s.seconds}s
               </Text>
               <Text wrap="wrap">{line}</Text>
+              {r.lint
+                .filter(w => w.row === i)
+                .map((w, n) => (
+                  <Text key={`lint-${i}-${n}`} color="warning" wrap="wrap">
+                    ⚠ {w.message}
+                  </Text>
+                ))}
               <Box flexDirection="row">
                 {i > 0 ? <Button key={`up-${i}`} label="↑" onPress={() => editScenes($, moveUp(i))} /> : null}
                 {i < r.scenes.length - 1 ? <Button key={`down-${i}`} label="↓" onPress={() => editScenes($, moveDown(i))} /> : null}
@@ -776,6 +843,13 @@ export const register: Register = on => {
           </Box>
         ) : null}
         {r.scenes.map(card)}
+        {r.lint
+          .filter(w => w.row === null)
+          .map((w, n) => (
+            <Text key={`lint-all-${n}`} color="warning" wrap="wrap">
+              {'   '}⚠ {w.message}
+            </Text>
+          ))}
       </Box>
     )
 

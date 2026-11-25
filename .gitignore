@@ -9,4 +9,7 @@ examples/*/reel/*.mp4
 examples/*/backup/
 docs/demo*/
 docs/worklog/
-examples/muchuan-reference/sample_reference.mp4
+examples/*/sample_reference.mp4
+examples/muchuan-reference/
+examples/*/frames/
+!examples/skill-flow/frames/

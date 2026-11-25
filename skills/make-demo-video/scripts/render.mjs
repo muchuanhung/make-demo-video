@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 // 分鏡表 ＋ 風格 → MP4、GIF、結果頁。
-// 用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 20] [--no-gif] [--no-open]
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+// 用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 30] [--gif-width 640（直式 360）] [--gif-fps 12] [--no-gif] [--no-open]
+import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import QRCode from "qrcode";
-import { SKILL_DIR, parseArgs, loadStyle, loadStoryboard, launchBrowser, escapeHtml, buildPlayer } from "./lib.mjs";
+import { SKILL_DIR, parseArgs, loadStyle, loadStoryboard, launchBrowser, escapeHtml, buildPlayer, formatWarnings } from "./lib.mjs";
+import { SHOTS } from "./shots.mjs";
 
 const args = parseArgs(process.argv.slice(2), ["no-gif", "no-open"]);
 if (!args.storyboard || !args.style) {
-  console.error("用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 20] [--no-gif] [--no-open]");
+  console.error("用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 30] [--gif-width 640（直式 360）] [--gif-fps 12] [--no-gif] [--no-open]");
   process.exit(2);
 }
 
 const started = Date.now();
-const fps = Number(args.fps || 20);
+const fps = Number(args.fps || 30);
 const outDir = path.resolve(args.out || path.dirname(args.storyboard));
 const name = args.name || "demo";
 
@@ -45,8 +46,8 @@ async function loadCredit(boardUrl) {
 
 function resultPage(board, style, files) {
   const c = style.colors;
-  const rows = board.scenes
-    .map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.kind)}</td><td>${s.seconds}s</td><td>${escapeHtml((s.caption || s.heading || "").replace(/\*\*/g, ""))}</td></tr>`)
+  const rows = board.raw
+    .map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.shot ? SHOTS[s.shot]?.label ?? s.shot : s.kind)}</td><td>${board.rows[i]?.seconds ?? s.seconds}s</td><td>${escapeHtml((s.heading || s.caption || "").replace(/\*\*/g, "").replace(/\n/g, ""))}</td></tr>`)
     .join("");
   return `<!doctype html>
 <html lang="zh-Hant">
@@ -88,6 +89,8 @@ function resultPage(board, style, files) {
 
 async function main() {
   const [board, style] = await Promise.all([loadStoryboard(args.storyboard), loadStyle(args.style)]);
+  const warn = formatWarnings(board.warnings);
+  if (warn) console.log(warn);
   await mkdir(outDir, { recursive: true });
   const playerFile = path.join(outDir, `${name}.player.html`);
   await writeFile(playerFile, await buildPlayer(board, style));
@@ -127,10 +130,13 @@ async function main() {
   let gif = null;
   if (!args["no-gif"]) {
     gif = path.join(outDir, `${name}.gif`);
-    const width = Math.min(board.width, 720);
+    // README 動圖的預設尺寸：橫式 640 寬、直式 360 寬（12 秒約 3–5 MB）
+    const width = Math.min(board.width, Number(args["gif-width"] || (board.portrait ? 360 : 640)));
+    const gifFps = Number(args["gif-fps"] || 12);
+    // stats_mode=diff、diff_mode=rectangle：調色盤以會動的部分為主、每格只重畫有變的區塊，檔案小一成、畫質不變。
     await run(ffmpegPath, [
       "-y", "-loglevel", "error", "-i", mp4,
-      "-vf", `fps=12,scale=${width}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=4`,
+      "-vf", `fps=${gifFps},scale=${width}:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle`,
       gif,
     ]);
   }
@@ -141,9 +147,14 @@ async function main() {
   await writeFile(page, resultPage(board, style, { mp4: path.basename(mp4), gif: gif && path.basename(gif), qrSvg, credit }));
 
   const seconds = ((Date.now() - started) / 1000).toFixed(1);
-  console.log(`完成，花了 ${seconds} 秒（影片 ${board.duration} 秒、${board.scenes.length} 幕、風格 ${style.id}）`);
+  console.log(`完成，花了 ${seconds} 秒（影片 ${board.duration} 秒、${board.raw.length} 幕、風格 ${style.id}）`);
   console.log(`MP4   ${mp4}`);
-  if (gif) console.log(`GIF   ${gif}`);
+  if (gif) {
+    const mb = (await stat(gif)).size / 1048576;
+    console.log(`GIF   ${gif}（${mb.toFixed(1)} MB）`);
+    // README 裡的 GIF 太大會載很久：超過 5 MB 時提醒縮小
+    if (mb > 5) console.log(`提醒：GIF 有 ${mb.toFixed(1)} MB，放 README 偏大；重跑時加 --gif-width ${board.portrait ? 300 : 480} --gif-fps 10 可以再小一半左右`);
+  }
   console.log(`結果頁 ${page}`);
   console.log(`預覽  ${playerFile}（瀏覽器直接開，不用重新算圖）`);
   if (!args["no-open"] && process.platform === "darwin") spawn("open", [page], { stdio: "ignore", detached: true }).unref();

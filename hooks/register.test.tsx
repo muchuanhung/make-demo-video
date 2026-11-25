@@ -53,7 +53,7 @@ function fakeFs(on: On, failReads?: RegExp) {
  * engine 的其餘部分：送出的訊息記在 submitted，跑過的指令記在 runs。
  * frames.mjs 被呼叫時，照當下的分鏡表幕數「產生」縮圖檔；framesExit 不是 0 時模擬失敗。
  */
-function engine(on: On, fs: ReturnType<typeof fakeFs>, opts: { toolStdout?: string; framesExit?: number } = {}) {
+function engine(on: On, fs: ReturnType<typeof fakeFs>, opts: { toolStdout?: string; framesExit?: number; lint?: object[] } = {}) {
   const submitted: string[] = []
   const runs: string[][] = []
   on('clock.now', () => ({ value: fs.now() }))
@@ -75,6 +75,7 @@ function engine(on: On, fs: ReturnType<typeof fakeFs>, opts: { toolStdout?: stri
       const out = fs.key(argv[argv.indexOf('--out') + 1] ?? '')
       const count = board ? (JSON.parse(board.text) as { scenes: unknown[] }).scenes.length : 0
       for (let n = 1; n <= count; n++) fs.put(`${out}/scene-${n}.png`, `frame-${n}`)
+      if (opts.lint) fs.put(`${out}/lint.json`, JSON.stringify(opts.lint))
     }
     return {
       value: { exitCode, stdout: '', stderr: exitCode ? 'Error: 找不到風格「nope」' : '', isStdoutTruncated: false, isStderrTruncated: false },
@@ -435,6 +436,40 @@ test('分鏡卡改字：直接寫回腳本與字幕（title 改 heading、其他
   await ui.unmount()
 })
 
+test('分鏡卡改字：phone／card 幕的字在 heading（大標題），有 caption 時才改 caption', async ($, on) => {
+  const fs = fakeFs(on)
+  engine(on, fs)
+  await begin($)
+  const board = {
+    title: 't',
+    aspect: '16:9',
+    scenes: [
+      { kind: 'phone', seconds: 2, heading: '洪睦筌', image: 'home.jpg' },
+      { kind: 'card', seconds: 1, heading: 'Weather Board' },
+      { kind: 'phone', seconds: 2, heading: '舊標題', caption: '字幕', image: 'home.jpg' },
+    ],
+  }
+  await writeBoth($, fs, board, '1. 洪睦筌\n2. Weather Board\n3. 字幕\n')
+  const ui = await $.ui.mount(PANE)
+
+  await ui.press({ key: 'edit-0' })
+  await ui.input({ key: 'edit-input-0', text: '把想法做成真的', kind: 'submit' })
+  await ui.redraw()
+  await ui.press({ key: 'edit-1' })
+  await ui.input({ key: 'edit-input-1', text: '曉行 Dawnline', kind: 'submit' })
+  await ui.redraw()
+  await ui.press({ key: 'edit-2' })
+  await ui.input({ key: 'edit-input-2', text: '新字幕', kind: 'submit' })
+
+  const saved = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text) as { scenes: Record<string, string>[] }
+  expect(saved.scenes[0]?.heading).toBe('把想法做成真的')
+  expect(saved.scenes[0]?.caption).toBe(undefined)
+  expect(saved.scenes[1]?.heading).toBe('曉行 Dawnline')
+  expect(saved.scenes[2]?.heading).toBe('舊標題')
+  expect(saved.scenes[2]?.caption).toBe('新字幕')
+  await ui.unmount()
+})
+
 test('Claude 用別的風格算圖時（例如使用者在對話裡說換風格），面板跟著換，縮圖也重算', async ($, on) => {
   const fs = fakeFs(on)
   const { runs } = engine(on, fs, { toolStdout: '完成，花了 9 秒' })
@@ -452,4 +487,96 @@ test('Claude 用別的風格算圖時（例如使用者在對話裡說換風格�
   await ui.redraw()
   expect((await ui.find({ type: 'Text', text: /從素材定義風格/ }))?.text).toBeTruthy()
   await ui.unmount()
+})
+
+test('鏡頭模板：分鏡卡顯示模板中文名稱、照拍數換算秒數；改字寫回 heading；自動檢查的提醒顯示在對應的卡上', async ($, on) => {
+  const fs = fakeFs(on)
+  engine(on, fs, {
+    lint: [
+      { row: 1, message: '第 2 幕：標題完整出現後只停 0.30 秒，至少要 0.5 秒' },
+      { row: null, message: '平均一個鏡頭 1.8 秒，太慢' },
+    ],
+  })
+  await begin($)
+  const board = {
+    title: 't',
+    aspect: '9:16',
+    beat: 0.4,
+    scenes: [
+      { shot: 'hook', heading: '把想法\n做成真的。' },
+      { shot: 'card', beats: 2, heading: '曉行 Dawnline' },
+      { shot: 'outro', heading: '洪睦筌' },
+    ],
+  }
+  await writeBoth($, fs, board, '1. 把想法做成真的。\n2. 曉行 Dawnline\n3. 洪睦筌\n')
+  const ui = await $.ui.mount(PANE)
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /開場標語/ }))?.text).toContain('1.2s')
+  expect((await ui.find({ type: 'Text', text: /作品卡/ }))?.text).toContain('0.8s')
+  expect((await ui.find({ type: 'Text', text: /只停 0\.30 秒/ }))?.text).toContain('⚠')
+  expect((await ui.find({ type: 'Text', text: /平均一個鏡頭/ }))?.text).toContain('1.8 秒')
+
+  await ui.press({ key: 'edit-1' })
+  await ui.input({ key: 'edit-input-1', text: 'Weather Board', kind: 'submit' })
+  const saved = JSON.parse(fs.files.get('docs/demo/storyboard.json')!.text) as { scenes: Record<string, string>[] }
+  expect(saved.scenes[1]?.heading).toBe('Weather Board')
+  expect(saved.scenes[1]?.caption).toBe(undefined)
+  await ui.unmount()
+})
+
+test('幕數上限跟 SKILL.md 一致（12 幕）：腳本 9 句時不會被壓成 8 幕，最多加到 12', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted } = engine(on, fs)
+  await begin($)
+  const ui = await $.ui.mount(PANE)
+  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['studio'], scenes: 9 })
+  await ui.redraw()
+  // 預設是腳本的 9 句；再加 6 次會停在上限 12
+  for (let n = 0; n < 6; n++) await ui.press({ key: 'scenes-up' })
+  await ui.press({ key: 'confirm' })
+  expect(submitted.at(-1)).toContain('12 幕')
+  await ui.unmount()
+})
+
+test('沿用輸出資料夾裡既有的分鏡表（沒有寫檔）：Claude 跑 check.mjs 檢查它之後，分鏡板讀進來並產生縮圖', async ($, on) => {
+  const fs = fakeFs(on)
+  const { runs } = engine(on, fs)
+  // 上一次留下的腳本與分鏡表，修改時間早於這次開始
+  fs.put('docs/demo/script.md', SCRIPT)
+  fs.put('docs/demo/storyboard.json', JSON.stringify(BOARD))
+  fs.put('elsewhere.txt', '') // 讓時鐘往前走：這次開始的時間晚於舊檔
+  await begin($, 'vscode')
+  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', suggested: ['studio'], scenes: 4 })
+  const frameRuns = () => runs.filter(argv => argv.some(a => a.endsWith('frames.mjs'))).length
+
+  // 還沒到 ③：舊的分鏡表不當成這次的分鏡板
+  const ui = await $.ui.mount({ ...PANE, surface: 'vscode' })
+  expect(frameRuns()).toBe(0)
+  expect(await ui.find({ type: 'Text', text: /storyboard\.json・4 幕/ })).toBeFalsy()
+
+  // 檢查別的資料夾的分鏡表（例如範例）不算沿用
+  await $.tool.call({ tool: 'Bash', command: 'node /x/skills/make-demo-video/scripts/check.mjs --storyboard examples/a/storyboard.json' })
+  expect(frameRuns()).toBe(0)
+
+  // ③ Claude 決定沿用、只跑自動檢查（絕對路徑也要對得上 docs/demo）
+  await $.tool.call({ tool: 'Bash', command: 'node /x/skills/make-demo-video/scripts/check.mjs --storyboard /repo/docs/demo/storyboard.json' })
+  expect(frameRuns()).toBe(1)
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /storyboard\.json・4 幕/ }))?.text).toContain('4 幕')
+  const svgs = (await ui.findAll({ type: 'Svg' })).filter(found => String(found.props.alt).startsWith('第'))
+  expect(svgs.length).toBe(4)
+
+  // 分鏡表沒變時再檢查一次，不重算縮圖
+  await $.tool.call({ tool: 'Bash', command: 'node /x/skills/make-demo-video/scripts/check.mjs --storyboard /repo/docs/demo/storyboard.json' })
+  expect(frameRuns()).toBe(1)
+  await ui.unmount()
+})
+
+test('寫完分鏡表接著跑 check.mjs：縮圖只算一次', async ($, on) => {
+  const fs = fakeFs(on)
+  const { runs } = engine(on, fs)
+  await begin($)
+  await writeBoth($, fs)
+  await $.tool.call({ tool: 'Bash', command: 'node skills/make-demo-video/scripts/check.mjs --storyboard docs/demo/storyboard.json' })
+  expect(runs.filter(argv => argv.some(a => a.endsWith('frames.mjs'))).length).toBe(1)
 })

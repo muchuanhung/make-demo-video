@@ -25,6 +25,10 @@ body {
   justify-content: center;
   gap: 1.2rem;
   padding: 3rem 4rem 7rem;
+  /* 每一幕自己鋪底色：轉場時前後兩幕會疊在一起，透明的話會透出另一幕。 */
+  background-color: var(--bg);
+  color: var(--text);
+  overflow: hidden;
 }
 .scene.on { display: flex; }
 
@@ -223,7 +227,7 @@ body[data-decor="scanlines"] #stage::after {
   pointer-events: none;
   background: repeating-linear-gradient(0deg, rgb(0 0 0 / 0.22) 0 1px, transparent 1px 4px);
 }
-body[data-decor="grid"] #stage {
+body[data-decor="grid"] .scene {
   background-image:
     linear-gradient(var(--border) 1px, transparent 1px),
     linear-gradient(90deg, var(--border) 1px, transparent 1px);
@@ -235,3 +239,161 @@ body[data-decor="glow"] h1, body[data-decor="glow"] h2, body[data-decor="glow"] 
 body[data-decor="glow"] .win, body[data-decor="glow"] .point {
   box-shadow: 0 0 0 1px var(--accent), 0 0 2.2rem color-mix(in srgb, var(--accent) 35%, transparent);
 }
+
+/* ---- 每一幕的底色（tone）：顏色由 player.js 換掉這一幕的 CSS 變數，這裡只處理對比 ---- */
+.scene[data-tone="accent"] { background-image: none !important; }
+body:not([data-mark="ink"]) .scene[data-tone="accent"] mark { background: var(--text); color: var(--bg); }
+body[data-caption="highlight"] .scene[data-tone="accent"] .caption span { background: var(--text); color: var(--bg); }
+.scene[data-tone="accent"] .url { background: var(--text); color: var(--bg); border-color: transparent; }
+.scene[data-tone="invert"] .url { background: var(--surface); }
+
+/* 重點字的畫法：box 是色塊（預設），ink 只換字色 */
+body[data-mark="ink"] mark { background: none; color: var(--mark); padding: 0; border-radius: 0; }
+
+/* 標題用換行分成幾行時，一行一行出來 */
+h1 .ln { display: block; }
+/* zoom、flash 轉場後的閃白（player.js 設定 --flash） */
+.scene::after { content: ""; position: absolute; inset: 0; z-index: 9; background: #fff; opacity: var(--flash, 0); pointer-events: none; }
+
+/* ---- 靠左的大標題版面（風格 align: left，或單一幕 align: left） ---- */
+body[data-align="left"] .scene.stack:not([data-align="center"]),
+.scene.stack[data-align="left"] { align-items: flex-start; padding-left: 5rem; padding-right: 5rem; }
+body[data-align="left"] .scene.stack:not([data-align="center"]) :is(h1, h2, .sub),
+.scene.stack[data-align="left"] :is(h1, h2, .sub) { text-align: left; }
+body[data-align="left"] h1 { font-size: 6.6rem; line-height: 1.08; font-weight: 900; letter-spacing: -0.01em; }
+body[data-align="left"] .url { font-family: var(--font-body); font-size: 1.3rem; font-weight: 700; padding: 0.45rem 1.2rem; }
+body[data-align="left"] .kicker { color: var(--muted); font-family: var(--font-body); font-weight: 700; font-size: 1.05rem; letter-spacing: 0.14em; }
+body[data-align="left"] .kicker::before { content: "●"; margin-right: 0.6em; color: var(--accent-ink); }
+body[data-align="left"] .scene[data-tone="accent"] .kicker { color: var(--text); }
+body[data-align="left"] .sub { color: var(--text); font-weight: 700; font-size: 1.7rem; }
+/* 結尾的名字最大 */
+body[data-align="left"] .scene.is-outro h1 { font-size: 8rem; }
+body[data-portrait][data-align="left"] .scene.is-outro h1 { font-size: 7.2rem; }
+
+/* ---- phone／card：字與畫面左右並排（直式時上下） ---- */
+.scene.split {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 3rem;
+  padding: 2rem 5rem;
+}
+.split .copy {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.split .copy h1 { font-size: 5.4rem; line-height: 1.08; font-weight: 900; text-align: left; letter-spacing: -0.01em; }
+.split.is-card .copy h1 { font-size: 4.6rem; }
+/* 手機幕的字比正中再高一點，下方留給技術標籤 */
+.scene.is-phone .copy { margin-bottom: 5rem; }
+.scene.is-phone.has-tags .copy { margin-bottom: 14rem; }
+body[data-portrait] .scene.is-phone .copy { margin-bottom: 0; }
+.split .copy .sub { text-align: left; }
+.split .device { flex: none; position: relative; display: grid; place-items: center; }
+
+.phone {
+  position: relative;
+  height: calc(var(--h) * 0.9);
+  aspect-ratio: 9 / 19.5;
+  padding: 0.55rem;
+  border-radius: 3rem;
+  background: #0e0d0c;
+  box-shadow: 0 2.4rem 4rem rgb(0 0 0 / 0.32), inset 0 0 0 0.12rem #3b3835;
+}
+.screen { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: 2.5rem; background: var(--paper); }
+.screen img { position: absolute; left: 0; top: 0; width: 100%; }
+.island { position: absolute; top: 1.15rem; left: 36%; width: 28%; height: 1.5rem; border-radius: 1rem; background: #000; }
+
+.pcard {
+  position: relative;
+  width: 26rem;
+  aspect-ratio: 1.62;
+  border-radius: 2.2rem;
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-weight: 700;
+  box-shadow: 0 1.8rem 3.5rem rgb(0 0 0 / 0.28);
+}
+.pcard.accent { background: var(--accent); }
+.pcard.light { background: var(--paper); color: var(--ink); }
+.pcard .lab { position: absolute; left: 1.6rem; top: 1.4rem; font-size: 1rem; letter-spacing: 0.08em; }
+.pcard .yr { position: absolute; left: 1.6rem; bottom: 1.4rem; font-size: 1rem; }
+.pcard .go { position: absolute; right: 1.6rem; bottom: 1.2rem; font-size: 1.2rem; }
+.pcard .glyph { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-display); font-size: 8rem; font-weight: 900; line-height: 1; }
+
+.pill {
+  padding: 0.6rem 1.5rem;
+  border-radius: 99rem;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 1.6rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.tag {
+  position: absolute;
+  z-index: 3;
+  padding: 0.45rem 1.1rem;
+  border-radius: 99rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 0.6rem 1.4rem rgb(0 0 0 / 0.18);
+}
+.tag.dark { background: var(--ink); color: var(--paper); }
+.tag.accent { background: var(--accent); color: var(--accent-text); }
+.tag.light { background: var(--paper); color: var(--ink); }
+
+body[data-portrait] .scene.split { flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 3rem; padding: 6rem 2.4rem 3rem; }
+body[data-portrait] .split .device { align-self: center; }
+/* 作品卡置中（align: "center"）：卡片與字整組放在畫面正中央，字也置中 */
+.scene.split.card-center { justify-content: center; }
+body[data-portrait] .scene.split.card-center { justify-content: center; padding-top: 3rem; }
+.split.card-center .copy { flex: none; align-items: center; }
+.split.card-center .copy :is(h1, .sub, .kicker) { text-align: center; }
+body[data-portrait] .phone { height: calc(var(--h) * 0.66); }
+body[data-portrait] .pcard { width: calc(var(--w) - 4.8rem); }
+body[data-portrait] .split .copy h1 { font-size: 5rem; }
+body[data-portrait][data-align="left"] h1 { font-size: 6.4rem; }
+body[data-portrait] .scene.stack:not([data-align="center"]) { padding-left: 2.4rem; padding-right: 2.4rem; }
+
+/* ---- halo：格線＋一直在動的重點色同心圓光暈 ---- */
+body[data-decor="halo"] .scene {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border) 55%, transparent) 1px, transparent 1px);
+  background-size: 3rem 3rem;
+}
+.halo {
+  position: absolute;
+  left: -12rem;
+  top: -14rem;
+  width: 36rem;
+  height: 36rem;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--accent) 55%, transparent) 0 18%, transparent 60%),
+    repeating-radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent) 0 2.4rem, color-mix(in srgb, var(--accent) 10%, transparent) 2.4rem 4.8rem);
+  -webkit-mask: radial-gradient(circle, #000 0 30%, transparent 70%);
+  mask: radial-gradient(circle, #000 0 30%, transparent 70%);
+  filter: blur(0.9rem);
+}
+.scene[data-tone="invert"] .halo { left: auto; top: auto; right: -10rem; bottom: -14rem; }
+.scene[data-tone="accent"] .halo { display: none; }
+
+/* ---- 手機鏡頭的版面：right（預設，字在左、手機在右）、left（手機在左）、big（手機放大、下緣出畫面，像特寫） ---- */
+.scene.split.lay-left { flex-direction: row-reverse; }
+.scene.split.lay-big .device { position: absolute; right: 7%; top: 14%; }
+.scene.split.lay-big .phone { height: calc(var(--h) * 1.2); }
+.scene.split.lay-big .copy { max-width: 55%; }
+body[data-portrait] .scene.split.lay-left { flex-direction: column-reverse; justify-content: flex-end; }
+body[data-portrait] .scene.split.lay-big .device { position: relative; right: auto; top: auto; margin-top: 1rem; }
+body[data-portrait] .scene.split.lay-big .phone { height: calc(var(--h) * 0.86); }
+body[data-portrait] .scene.split.lay-big .copy { max-width: none; }
