@@ -1,0 +1,67 @@
+{
+  "title": "Claude Community Taiwan：一起動手做",
+  "aspect": "16:9",
+  "url": "https://claude.tw/",
+  "scenes": [
+    {
+      "id": "hook",
+      "kind": "title",
+      "seconds": 3,
+      "kicker": "Claude Community Taiwan",
+      "heading": "一起動手做，把 **AI** 變成隊友",
+      "sub": "Meetup・Workshop・Build Day"
+    },
+    {
+      "id": "home",
+      "kind": "browser",
+      "seconds": 5,
+      "address": "claude.tw",
+      "image": "shot-1.png",
+      "focus": [
+        { "at": 0, "x": 0.5, "y": 0.5, "zoom": 1 },
+        { "at": 0.6, "x": 0.32, "y": 0.45, "zoom": 1.5 },
+        { "at": 1, "x": 0.32, "y": 0.45, "zoom": 1.5 }
+      ],
+      "caption": "台灣 Claude 使用者**交流、分享**的基地"
+    },
+    {
+      "id": "event",
+      "kind": "browser",
+      "seconds": 5,
+      "address": "claude.tw",
+      "image": "shot-2.png",
+      "focus": [
+        { "at": 0, "x": 0.5, "y": 0.45, "zoom": 1.1 },
+        { "at": 1, "x": 0.45, "y": 0.5, "zoom": 1.35 }
+      ],
+      "clicks": [{ "at": 0.55, "x": 0.82, "y": 0.52 }],
+      "caption": "近期活動：**Claude Code Workshop**，一鍵報名"
+    },
+    {
+      "id": "discord",
+      "kind": "browser",
+      "seconds": 4,
+      "address": "claude.tw",
+      "image": "shot-3.png",
+      "focus": [
+        { "at": 0, "x": 0.5, "y": 0.4, "zoom": 1.1 },
+        { "at": 1, "x": 0.35, "y": 0.8, "zoom": 1.35 }
+      ],
+      "caption": "活動結束後，話題在 **Discord** 繼續"
+    },
+    {
+      "id": "history",
+      "kind": "points",
+      "seconds": 4,
+      "heading": "每個月都有新活動",
+      "items": ["Claude Meetup Taipei", "Code with Claude Workshop", "**Claude Code Build Day**"]
+    },
+    {
+      "id": "outro",
+      "kind": "outro",
+      "seconds": 3,
+      "heading": "報名下一場",
+      "sub": "claude.tw"
+    }
+  ]
+}

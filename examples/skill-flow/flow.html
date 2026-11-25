@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>skill flow</title>
+<!--
+  README 用的操作示範：用 HTML 重建「VS Code 的 Claude 聊天面板＋make-demo-video 進度面板」跑完 ①→④ 的樣子。
+  每一格都是時間 t 的純函式：window.seek(t) 畫出第 t 秒，render.mjs 逐格截圖合成。瀏覽器直接開會自動播放。
+  需要 out/demo.mp4（source/ 裡 claude.tw 的分鏡表用 studio 算出的影片），由 render.mjs 先算好。
+-->
+<style>
+  :root {
+    --bg: #1f1f1f; --side: #181818; --line: #2b2b2b; --text: #cccccc; --muted: #8b8b8b; --dim: #6b6b6b;
+    --accent: #d97757; --ok: #89d185; --warn: #e2c08d; --btn: #313131; --input: #2a2a2a;
+    --ui: -apple-system, "PingFang TC", "Noto Sans TC", "Helvetica Neue", sans-serif;
+    --mono: Menlo, "SF Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1280px; height: 720px; overflow: hidden; background: #0e0e0e; font-family: var(--ui); color: var(--text); }
+  #win { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+  .titlebar { height: 30px; flex: none; display: flex; align-items: center; justify-content: center; position: relative; background: var(--side); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .dots { position: absolute; left: 12px; display: flex; gap: 8px; }
+  .dots i { width: 12px; height: 12px; border-radius: 50%; display: block; background: #ff5f57; }
+  .dots i:nth-child(2) { background: #febc2e; } .dots i:nth-child(3) { background: #28c840; }
+  .main { flex: 1; display: flex; min-height: 0; }
+  .activity { width: 44px; flex: none; background: var(--side); border-right: 1px solid var(--line); }
+  .activity b { display: block; width: 22px; height: 22px; margin: 14px auto 0; border-radius: 5px; border: 2px solid #555; }
+  .activity b.on { border-color: var(--accent); }
+
+  .chat { width: 540px; flex: none; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+  .head { height: 34px; flex: none; display: flex; align-items: center; padding: 0 14px; font-size: 11px; letter-spacing: .08em; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .head b { color: var(--text); font-weight: 600; letter-spacing: 0; font-size: 12px; margin-left: 6px; }
+  .log { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 10px; padding: 14px 16px; font-size: 14px; line-height: 1.55; }
+  .msg-user { align-self: flex-end; max-width: 88%; background: #2d2d2d; border: 1px solid #3a3a3a; border-radius: 10px; padding: 8px 12px; }
+  .msg-user code, .input code { font-family: var(--mono); color: var(--accent); }
+  .tool { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .tool::before { content: "⏺ "; color: var(--ok); }
+  .tool b { color: var(--text); font-weight: 600; }
+  .tool .sub { display: block; padding-left: 18px; color: var(--dim); }
+  .say { color: var(--text); }
+  .say::before { content: "⏺ "; color: var(--text); font-family: var(--mono); font-size: 12px; }
+  .say em { font-style: normal; color: var(--accent); }
+  .spin { font-family: var(--mono); font-size: 12.5px; color: var(--accent); }
+  .input { flex: none; margin: 0 12px 12px; min-height: 64px; border: 1px solid #3c3c3c; border-radius: 10px; background: var(--input); padding: 10px 12px; font-size: 14px; color: var(--text); }
+  .input .ph { color: var(--dim); }
+  .caret { display: inline-block; width: 2px; height: 16px; background: var(--text); vertical-align: -3px; margin-left: 1px; }
+
+  .pane { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }
+  .body { flex: 1; min-height: 0; overflow: hidden; padding: 14px 18px; display: flex; flex-direction: column; gap: 12px; font-size: 13.5px; }
+  .step-head { display: flex; gap: 8px; align-items: baseline; white-space: nowrap; overflow: hidden; }
+  .step-head .mark { width: 14px; text-align: center; }
+  .step-head .mark.ok { color: var(--ok); } .step-head .mark.cur { color: var(--warn); } .step-head .mark.idle { color: var(--dim); }
+  .step-head .title.cur { font-weight: 700; }
+  .step-head .detail { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+  .indent { padding-left: 22px; display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .line { display: flex; align-items: center; gap: 6px; }
+  .line .t { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; height: 22px; padding: 0 8px; border-radius: 4px; background: var(--btn); color: var(--text); font-size: 12px; white-space: nowrap; }
+  .btn.primary { background: var(--accent); color: #1a1a1a; font-weight: 600; }
+  .btn.small { padding: 0 6px; min-width: 22px; color: var(--muted); }
+  .btn.hot { outline: 2px solid #fff; outline-offset: 1px; }
+  .grid { display: flex; gap: 8px; }
+  .cell { width: 92px; display: flex; flex-direction: column; gap: 4px; }
+  .cell img, .cell .noimg { width: 92px; height: 52px; border-radius: 3px; display: block; object-fit: cover; }
+  .cell .noimg { display: flex; align-items: center; justify-content: center; border: 1px dashed #444; color: var(--muted); font-size: 11px; }
+  .sw { display: flex; gap: 2px; height: 8px; align-items: center; font-size: 10px; color: var(--warn); }
+  .sw i { width: 14px; height: 8px; display: block; }
+  .cell .btn { justify-content: flex-start; padding: 0 5px; font-size: 11.5px; }
+  .row { display: flex; align-items: center; gap: 6px; }
+  .row > span:first-child { width: 34px; color: var(--muted); }
+  .cards { display: flex; flex-direction: column; gap: 6px; }
+  .card { display: flex; gap: 10px; height: 60px; position: relative; }
+  .card .th { width: 96px; height: 54px; flex: none; border-radius: 3px; overflow: hidden; background: #2a2a2a; display: flex; align-items: center; justify-content: center; font-size: 10.5px; color: var(--muted); }
+  .card .th img { width: 96px; height: 54px; display: block; }
+  .card .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .card .meta { color: var(--dim); font-size: 11.5px; }
+  .card .txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .btns { display: flex; gap: 4px; }
+  .card .btns .btn { height: 18px; font-size: 11px; padding: 0 5px; color: var(--muted); }
+  .note { color: var(--dim); font-size: 12px; }
+
+  .result { position: absolute; left: 50%; top: 50%; width: 900px; height: 520px; margin: -250px 0 0 -450px; background: #f6f5f2; border-radius: 10px; box-shadow: 0 30px 80px rgba(0,0,0,.6); overflow: hidden; display: none; flex-direction: column; color: #2b2726; }
+  .result .bar { height: 34px; flex: none; background: #e7e5e0; display: flex; align-items: center; gap: 10px; padding: 0 12px; }
+  .result .url { flex: 1; height: 22px; border-radius: 6px; background: #fff; font-size: 12px; color: #666; display: flex; align-items: center; padding: 0 10px; font-family: var(--mono); }
+  .result .page { flex: 1; display: flex; gap: 18px; padding: 22px; }
+  .result video { width: 600px; height: 338px; border-radius: 8px; background: #000; display: block; }
+  .result aside { flex: 1; background: #fff; border-radius: 8px; border: 1px solid #e4e0da; padding: 16px; font-size: 13px; line-height: 1.6; }
+  .result aside h1 { font-size: 16px; margin: 0 0 6px; }
+  .result aside p { margin: 0 0 8px; color: #6b6560; }
+
+  #cursor { position: absolute; left: 0; top: 0; width: 22px; height: 22px; pointer-events: none; display: none; z-index: 10; }
+  #ripple { position: absolute; width: 36px; height: 36px; margin: -18px 0 0 -18px; border-radius: 50%; border: 2px solid #fff; pointer-events: none; display: none; z-index: 9; }
+</style>
+</head>
+<body>
+<div id="win">
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>my-project — Visual Studio Code</div>
+  <div class="main">
+    <div class="activity"><b></b><b></b><b class="on"></b></div>
+    <div class="chat">
+      <div class="head">CLAUDE CODE</div>
+      <div class="log" id="log"></div>
+      <div class="input" id="input"></div>
+    </div>
+    <div class="pane" id="pane">
+      <div class="head">PANE<b>make-demo-video</b></div>
+      <div class="body" id="body"></div>
+    </div>
+  </div>
+  <div class="result" id="result">
+    <div class="bar"><span class="dots" style="position:static"><i></i><i></i><i></i></span><div class="url">file:///…/my-project/docs/demo/demo.html</div></div>
+    <div class="page">
+      <video id="vid" src="out/demo.mp4" muted playsinline preload="auto"></video>
+      <aside>
+        <h1>Claude Community Taiwan：一起動手做</h1>
+        <p>風格：暖白解說・24 秒・1280×720</p>
+        <p>檔案：demo.mp4、demo.gif</p>
+        <p>1 title 3s<br>2 browser 5s<br>3 browser 5s<br>4 points 4s<br>5 browser 4s<br>6 outro 3s</p>
+      </aside>
+    </div>
+  </div>
+</div>
+<div id="cursor"><svg viewBox="0 0 22 22" width="22" height="22"><path d="M3 2 L3 18 L7.5 14 L10.5 20.5 L13.3 19.3 L10.4 12.9 L16.5 12.9 Z" fill="#fff" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/></svg></div>
+<div id="ripple"></div>
+<script>
+(() => {
+  // ── 時間軸（秒）────────────────────────────────────────────
+  const T = {
+    type0: 0.6, type1: 2.4, send: 3.4, pane: 3.7,
+    read: 4.3, read2: 5.1, writeScript: 6.0, lines0: 6.2, step1: 7.8,
+    tool2: 8.4, show: 8.8, pickSec: 11.2, confirm: 12.8,
+    writeBoard: 13.8, board: 14.5, frames: 15.5, say3: 15.8,
+    up: 18.4, reframe: 19.4, compose: 21.0,
+    render0: 21.6, render1: 25.0, done: 25.3, result: 26.0, end: 36,
+  };
+  window.DURATION = T.end;
+
+  const PROMPT = "/make-demo-video https://claude.tw/";
+  const SCENES = [
+    { kind: "title", s: 3, line: "一起動手做，把 AI 變成隊友" },
+    { kind: "browser", s: 5, line: "台灣 Claude 使用者交流、分享的基地" },
+    { kind: "browser", s: 5, line: "近期活動：Claude Code Workshop，一鍵報名" },
+    { kind: "browser", s: 4, line: "活動結束後，話題在 Discord 繼續" },
+    { kind: "points", s: 4, line: "每個月都有新活動" },
+    { kind: "outro", s: 3, line: "報名下一場" },
+  ];
+  const STYLES = [
+    { id: "screenplay", name: "紙卡劇本", swatch: ["#22324d", "#ffffff", "#1c1c1c", "#ffe14d"] },
+    { id: "studio", name: "暖白解說", swatch: ["#fcfaf7", "#ffffff", "#2b2726", "#e2694a"] },
+    { id: "terminal", name: "終端機", swatch: ["#0b0f0c", "#111a14", "#d7f5dd", "#3ddc84"] },
+    { id: "neon", name: "霓虹", swatch: ["#130b24", "#1d1236", "#f4eaff", "#ff4fd8"] },
+    { id: "blueprint", name: "藍圖", swatch: ["#12408f", "#0f3577", "#f2f7ff", "#ffd23f"] },
+    { id: "custom", name: "從素材定義", swatch: [] },
+  ];
+  const THUMBS = "../../skills/make-demo-video/styles/thumbs/";
+
+  // 游標：到達時間、目標（data-k）、是否在到達後點一下
+  const PATH = [
+    { t: 9.6, xy: [1010, 640] },
+    { t: 10.8, k: "sec-30", click: T.pickSec },
+    { t: 12.4, k: "confirm", click: T.confirm },
+    { t: 16.6, k: "confirm-hold" },
+    { t: 18.0, k: "up-4", click: T.up },
+    { t: 20.6, k: "compose", click: T.compose },
+    { t: 21.8, k: "compose-hold" },
+  ];
+  const CURSOR_ON = [9.6, 21.8];
+
+  const clamp = (x) => Math.max(0, Math.min(1, x));
+  const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const $ = (id) => document.getElementById(id);
+
+  // ── 左邊：聊天 ────────────────────────────────────────────
+  function chat(t) {
+    const items = [];
+    const at = (time, html) => { if (t >= time) items.push(html); };
+    at(T.send, `<div class="msg-user"><code>/make-demo-video</code> https://claude.tw/</div>`);
+    if (t >= T.send && t < T.read) items.push(`<div class="spin">✻ 讀素材中…</div>`);
+    at(T.read, `<div class="tool"><b>WebFetch</b>(https://claude.tw/)</div>`);
+    at(T.read2, `<div class="tool"><b>Bash</b>(node scripts/capture.mjs https://claude.tw/ --shots 3)<span class="sub">⎿ shot-1.png、shot-2.png、shot-3.png</span></div>`);
+    at(T.writeScript, `<div class="tool"><b>Write</b>(docs/demo/script.md)<span class="sub">⎿ 6 句</span></div>`);
+    at(T.step1, `<div class="say"><em>① 腳本</em>｜6 句，寫在 docs/demo/script.md</div>`);
+    at(T.tool2, `<div class="tool"><b>make-demo-video · show_options</b>(out: docs/demo)</div>`);
+    at(T.show, `<div class="say"><em>② 風格</em>｜請在右側面板選擇風格、比例、秒數與幕數</div>`);
+    at(T.confirm + 0.1, `<div class="msg-user">② 選好了：風格 暖白解說、比例 16:9、約 30 秒、6 幕</div>`);
+    at(T.writeBoard, `<div class="tool"><b>Write</b>(docs/demo/storyboard.json)<span class="sub">⎿ 6 幕 24 秒</span></div>`);
+    at(T.say3, `<div class="say"><em>③ 分鏡</em>｜6 幕 24 秒，在右側分鏡板確認後按「合成影片」</div>`);
+    at(T.compose + 0.1, `<div class="msg-user">合成影片：分鏡板確認好了，照目前的 storyboard.json、用風格 studio 算圖</div>`);
+    if (t >= T.render0) {
+      const pct = Math.round(clamp((t - T.render0) / (T.render1 - T.render0)) * 100);
+      items.push(`<div class="tool"><b>Bash</b>(node scripts/render.mjs --storyboard storyboard.json --style studio)<span class="sub">⎿ ${pct < 100 ? `算圖中 ${pct}%` : "完成，花了 21.4 秒"}</span></div>`);
+    }
+    at(T.done, `<div class="say"><em>④ 算圖</em>｜完成 → docs/demo/demo.mp4、demo.gif，結果頁已打開</div>`);
+    $("log").innerHTML = items.join("");
+
+    let input;
+    if (t < T.type0) input = `<span class="ph">輸入訊息，或用 / 叫出指令</span><span class="caret"></span>`;
+    else if (t < T.send) {
+      const n = Math.round(clamp((t - T.type0) / (T.type1 - T.type0)) * PROMPT.length);
+      const typed = PROMPT.slice(0, n);
+      const cmd = typed.slice(0, 16), rest = typed.slice(16);
+      input = `<code>${esc(cmd)}</code>${esc(rest)}<span class="caret"></span>`;
+    } else input = `<span class="ph">輸入訊息，或用 / 叫出指令</span>`;
+    $("input").innerHTML = input;
+  }
+
+  // ── 右邊：進度面板 ────────────────────────────────────────
+  function head(i, title, detail, done, current) {
+    const mark = done[i] ? ["ok", "✔"] : i === current ? ["cur", "●"] : ["idle", "○"];
+    return `<div class="step-head"><span class="mark ${mark[0]}">${mark[1]}</span><span class="title ${i === current ? "cur" : ""}">${i + 1}. ${title}</span><span class="detail">${esc(detail)}</span></div>`;
+  }
+  const btn = (label, k, cls = "") => `<span class="btn ${cls}" data-k="${k || ""}">${label}</span>`;
+
+  function pane(t) {
+    const hasBoard = t >= T.board;
+    const picking = t >= T.show && t < T.confirm;
+    const done = [t >= T.step1, t >= T.confirm, hasBoard, t >= T.done];
+    const current = done.indexOf(false);
+    const seconds = t >= T.pickSec ? 30 : 15;
+    const parts = [];
+
+    // ①
+    let s1 = head(0, "腳本", done[0] ? `docs/demo/script.md・6 句${hasBoard ? "（在下方分鏡板編輯）" : ""}` : "讀素材中…", done, current);
+    if (!hasBoard && t >= T.lines0) {
+      const shown = SCENES.filter((_, i) => t >= T.lines0 + i * 0.25);
+      s1 += `<div class="indent">${shown.map((sc, i) => `<div class="line"><span class="t">${String(i + 1).padStart(2, " ")}. ${esc(sc.line)}</span>${i > 0 ? btn("↑", "", "small") : ""}${i < 5 ? btn("↓", "", "small") : ""}${btn("✕", "", "small")}</div>`).join("")}</div>`;
+    }
+    parts.push(`<div>${s1}</div>`);
+
+    // ②
+    let s2 = head(1, "風格", done[1] ? "暖白解說・16:9・30 秒・6 幕" : picking ? "請選擇，按「確定」" : "", done, current);
+    if (done[1]) s2 += `<div class="indent" style="flex-direction:row">${btn("↺ 重新選")}</div>`;
+    if (picking) {
+      const cells = STYLES.map((s, i) => {
+        const on = s.id === "studio";
+        const img = s.id === "custom" ? `<div class="noimg">取網站色彩</div>` : `<img src="${THUMBS}${s.id}.png">`;
+        const sw = s.swatch.map((c) => `<i style="background:${c}"></i>`).join("") + (s.id === "studio" ? " 推薦" : "");
+        return `<div class="cell">${img}<div class="sw">${sw}</div>${btn(`${on ? "●" : "○"} ${i + 1} ${s.name}`, "", on ? "primary" : "")}</div>`;
+      }).join("");
+      const choice = (label, on, k) => btn(`${on ? "●" : "○"} ${label}`, k, on ? "primary" : "");
+      s2 += `<div class="indent">
+        <div class="grid">${cells}</div>
+        <div class="row"><span>比例</span>${choice("16:9 橫式", true)}${choice("9:16 直式", false)}</div>
+        <div class="row"><span>秒數</span>${[15, 30, 45, 60].map((n) => choice(n + "s", seconds === n, "sec-" + n)).join("")}</div>
+        <div class="row"><span>幕數</span>${btn("−")}<span>&nbsp;6 幕&nbsp;</span>${btn("+")}</div>
+        <div>${btn("確定 ↵", "confirm", "primary")}</div>
+      </div>`;
+    }
+    parts.push(`<div data-k="confirm-hold">${s2}</div>`);
+
+    // ③
+    const framing = (t >= T.board && t < T.frames) || (t >= T.up + 0.65 && t < T.reframe);
+    let s3 = head(2, "分鏡板", hasBoard ? `docs/demo/storyboard.json・6 幕 24 秒${framing ? "・產生縮圖中…" : ""}` : "", done, current);
+    if (hasBoard) {
+      // 按第 5 幕的 ↑ 之後，第 5 幕與第 4 幕交換；0.6 秒內滑過去
+      const swap = ease(clamp((t - T.up) / 0.6));
+      const order = swap >= 1 ? [0, 1, 2, 4, 3, 5] : [0, 1, 2, 3, 4, 5];
+      const cards = order.map((id, i) => {
+        const sc = SCENES[id];
+        let dy = 0;
+        if (swap > 0 && swap < 1) dy = id === 4 ? -66 * swap : id === 3 ? 66 * swap : 0;
+        const thumb = t < T.frames ? "產生縮圖中…" : `<img src="frames/scene-${id + 1}.png">`;
+        const k = (name) => `${name}-${i}`;
+        // 往上移的那張浮在上層，交錯時不會跟另一張疊成一團
+        const lift = dy < 0 ? "z-index:2;background:var(--bg);box-shadow:0 6px 18px rgba(0,0,0,.55);" : "";
+        return `<div class="card" style="transform:translateY(${dy}px);${lift}">
+          <div class="th">${thumb}</div>
+          <div class="info">
+            <div class="meta">${i + 1} ・ ${sc.kind} ・ ${sc.s}s</div>
+            <div class="txt">${esc(sc.line)}</div>
+            <div class="btns">${i > 0 ? btn("↑", k("up")) : ""}${i < 5 ? btn("↓", k("down")) : ""}${btn("✕")}${btn("＋ 插一句")}${btn("✎ 改字")}${btn("⟳ 重畫")}</div>
+          </div>
+        </div>`;
+      }).join("");
+      s3 += `<div class="indent"><div class="cards">${cards}</div></div>`;
+    }
+    parts.push(`<div>${s3}</div>`);
+
+    // ④
+    const canCompose = hasBoard && !done[3];
+    let s4 = head(3, "合成影片", done[3] ? "docs/demo/demo.mp4・21 秒 → 結果頁已打開" : canCompose ? "確認分鏡板後按「合成影片」" : "", done, current);
+    if (canCompose) s4 += `<div class="indent" style="flex-direction:row">${btn("▶ 合成影片", "compose", "primary")}</div>`;
+    parts.push(`<div data-k="compose-hold">${s4}</div>`);
+
+    $("body").innerHTML = parts.join("");
+    const p = $("pane");
+    const k = ease(clamp((t - T.pane) / 0.4));
+    p.style.opacity = t < T.pane ? 0 : k;
+    p.style.transform = `translateX(${(1 - k) * 40}px)`;
+  }
+
+  // ── 游標 ──────────────────────────────────────────────────
+  const seen = {};
+  function where(step) {
+    if (step.xy) return step.xy;
+    const node = document.querySelector(`[data-k="${step.k}"]`);
+    if (node) {
+      const r = node.getBoundingClientRect();
+      seen[step.k] = step.k.endsWith("-hold") ? [r.left + 60, r.top + 10] : [r.left + r.width / 2 - 2, r.top + r.height / 2 - 2];
+    }
+    return seen[step.k] || [1010, 640];
+  }
+  function cursor(t) {
+    const c = $("cursor"), rip = $("ripple");
+    if (t < CURSOR_ON[0] || t > CURSOR_ON[1]) { c.style.display = rip.style.display = "none"; return; }
+    PATH.forEach(where); // 記下目前畫面上找得到的目標位置
+    let x, y;
+    const next = PATH.findIndex((p) => p.t > t);
+    if (next <= 0) [x, y] = where(PATH[next === 0 ? 0 : PATH.length - 1]);
+    else {
+      const a = PATH[next - 1], b = PATH[next];
+      const start = Math.max(a.t, (a.click || a.t) + 0.15);
+      const k = ease(clamp((t - start) / (b.t - start)));
+      const [ax, ay] = where(a), [bx, by] = where(b);
+      x = ax + (bx - ax) * k; y = ay + (by - ay) * k;
+    }
+    c.style.display = "block";
+    c.style.transform = `translate(${x}px, ${y}px)`;
+    const click = PATH.find((p) => p.click && t >= p.click && t < p.click + 0.35);
+    if (click) {
+      const k = (t - click.click) / 0.35;
+      rip.style.display = "block";
+      rip.style.left = x + 3 + "px"; rip.style.top = y + 3 + "px";
+      rip.style.transform = `scale(${0.4 + k})`;
+      rip.style.opacity = 1 - k;
+    } else rip.style.display = "none";
+    // 游標正停在按鈕上時，按鈕加外框
+    const hover = PATH.find((p) => p.click && t >= p.t - 0.05 && t < p.click + 0.1);
+    if (hover) document.querySelector(`[data-k="${hover.k}"]`)?.classList.add("hot");
+  }
+
+  // ── 結果頁 ────────────────────────────────────────────────
+  const vid = $("vid");
+  async function result(t) {
+    const r = $("result");
+    if (t < T.result) { r.style.display = "none"; return; }
+    const k = ease(clamp((t - T.result) / 0.5));
+    r.style.display = "flex";
+    r.style.opacity = k;
+    r.style.transform = `translateY(${(1 - k) * 30}px) scale(${0.96 + 0.04 * k})`;
+    // 結果頁裡的影片快轉播放：剩下的秒數播完整支 24 秒
+    const want = Math.min(23.9, Math.max(0, (t - T.result - 0.3) * (24 / (T.end - T.result - 0.6))));
+    if (Math.abs(vid.currentTime - want) > 0.001) {
+      await new Promise((resolve) => { vid.addEventListener("seeked", resolve, { once: true }); vid.currentTime = want; });
+    }
+  }
+
+  window.seek = async (t) => { chat(t); pane(t); cursor(t); await result(t); };
+  window.ready = new Promise((resolve) => {
+    if (vid.readyState >= 1) resolve();
+    else { vid.addEventListener("loadedmetadata", resolve, { once: true }); vid.addEventListener("error", resolve, { once: true }); }
+  }).then(() => Promise.all([...document.images].map((img) => img.decode?.().catch(() => {}))));
+
+  // 瀏覽器直接開（不是算圖）時自動播放
+  if (!navigator.webdriver) {
+    const t0 = performance.now();
+    const loop = () => { window.seek(((performance.now() - t0) / 1000) % T.end); requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+  }
+})();
+</script>
+</body>
+</html>
