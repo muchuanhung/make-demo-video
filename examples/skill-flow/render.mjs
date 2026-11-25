@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // README 的操作示範：把 flow.html 逐格截圖，合成 skill-flow.mp4 與 skill-flow.gif。
 // 用法（repo 根目錄）：node examples/skill-flow/render.mjs [--fps 20]
-// 會先確認 out/demo.mp4（weather-board 用 studio 算的影片）與 frames/（分鏡縮圖）在不在，沒有就先算。
+// 會先確認 out/demo.mp4（source/ 裡 claude.tw 的分鏡表用 studio 算的影片）與 frames/（分鏡縮圖）在不在，沒有就先算。
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -17,7 +17,7 @@ const { default: ffmpegPath } = await import(path.join(skill, "node_modules/ffmp
 
 const args = parseArgs(process.argv.slice(2));
 const fps = Number(args.fps || 20);
-const board = path.join(root, "examples/weather-board/storyboard.json");
+const board = path.join(here, "source/storyboard.json");
 
 function run(cmd, cmdArgs) {
   return new Promise((resolve, reject) => {
@@ -31,10 +31,10 @@ if (!existsSync(path.join(here, "frames/scene-1.png"))) {
   await run("node", [path.join(skill, "scripts/frames.mjs"), "--storyboard", board, "--style", "studio", "--out", path.join(here, "frames")]);
 }
 if (!existsSync(path.join(here, "out/demo.mp4"))) {
-  // 示範裡在分鏡板按了第 4 幕的 ↑，所以結果頁播的影片是第 3、4 幕對調後的版本
+  // 示範裡在分鏡板按了第 5 幕的 ↑，所以結果頁播的影片是第 4、5 幕對調後的版本
   const src = JSON.parse(await readFile(board, "utf8"));
   const scenes = src.scenes.map((s) => (s.image ? { ...s, image: path.resolve(path.dirname(board), s.image) } : s));
-  [scenes[2], scenes[3]] = [scenes[3], scenes[2]];
+  [scenes[3], scenes[4]] = [scenes[4], scenes[3]];
   await mkdir(path.join(here, "out"), { recursive: true });
   const swapped = path.join(here, "out/storyboard.json");
   await writeFile(swapped, JSON.stringify({ ...src, scenes }, null, 2));

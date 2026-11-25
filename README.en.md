@@ -2,25 +2,25 @@
 
 [繁體中文](/README.md) | English
 
-A Claude Code skill and mod that turns a repo, a URL, a PDF or a piece of text into a demo video (MP4 + GIF, ready for a README) in a few minutes:
+A Claude Code skill + mod: turn your material into a demo video (MP4 + GIF) in minutes.
 
 - **Skill**: `/make-demo-video` reads the material, writes a script, lays out a storyboard, then renders it frame by frame in a browser and joins the frames with ffmpeg.
 - **Mod**: a progress pane next to the chat. Pick a style, see a thumbnail of every scene, adjust the storyboard, and press 合成影片 (Render) when it looks right.
 
 ![One /make-demo-video run in VS Code: script, style picked in the pane, storyboard adjusted, video rendered](examples/skill-flow/skill-flow.gif)
 
-The demo is an HTML reconstruction, not a screen recording: the waits are shortened (a real run takes about a minute to write the script and about 20 seconds to render), and the chat panel is drawn simpler than the real one. The scene thumbnails and the video on the result page were really rendered by this tool. Source in [`examples/skill-flow/`](examples/skill-flow/).
+The demo is an HTML reconstruction, not a screen recording: the waits are shortened (a real run takes about a minute to write the script and about 20 seconds to render), and the chat panel is drawn simpler than the real one.
 
 ### How it works
 
 | Step | What happens | Output |
 |---|---|---|
-| ① Script | Claude reads the material and writes one line per scene | `script.md` |
+| ① Script | Claude analyses text, documents or a URL and writes the script (one line per scene) | `script.md` |
 | ② Style | Pick a built-in style, aspect, length and scene count in the pane, or take colours from the material | `style.json` (custom only) |
 | ③ Storyboard | Move, delete, reword or redo single scenes on the board | `storyboard.json` |
 | ④ Render | Render once you confirm | `demo.mp4`, `demo.gif`, result page |
 
-The video is computed from storyboard + style, not recorded: change a caption or swap the style and it re-renders in about 20 seconds; the storyboard is plain text you can commit and review.
+The video is computed from storyboard + style, not recorded: change a caption or swap the style and it re-renders in about 20 seconds; don't like a scene? Have Claude redo just that scene, or pick a different style in the pane.
 
 ### Install
 

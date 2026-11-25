@@ -6,7 +6,7 @@
 <!--
   README 用的操作示範：用 HTML 重建「VS Code 的 Claude 聊天面板＋make-demo-video 進度面板」跑完 ①→④ 的樣子。
   每一格都是時間 t 的純函式：window.seek(t) 畫出第 t 秒，render.mjs 逐格截圖合成。瀏覽器直接開會自動播放。
-  需要 out/demo.mp4（weather-board 用 studio 算出的影片），由 render.mjs 先算好。
+  需要 out/demo.mp4（source/ 裡 claude.tw 的分鏡表用 studio 算出的影片），由 render.mjs 先算好。
 -->
 <style>
   :root {
@@ -94,7 +94,7 @@
 </head>
 <body>
 <div id="win">
-  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>weather-board — Visual Studio Code</div>
+  <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span>my-project — Visual Studio Code</div>
   <div class="main">
     <div class="activity"><b></b><b></b><b class="on"></b></div>
     <div class="chat">
@@ -108,14 +108,14 @@
     </div>
   </div>
   <div class="result" id="result">
-    <div class="bar"><span class="dots" style="position:static"><i></i><i></i><i></i></span><div class="url">file:///…/weather-board/docs/demo/demo.html</div></div>
+    <div class="bar"><span class="dots" style="position:static"><i></i><i></i><i></i></span><div class="url">file:///…/my-project/docs/demo/demo.html</div></div>
     <div class="page">
       <video id="vid" src="out/demo.mp4" muted playsinline preload="auto"></video>
       <aside>
-        <h1>weather-board：台灣天氣，一眼看完</h1>
+        <h1>Claude Community Taiwan：一起動手做</h1>
         <p>風格：暖白解說・24 秒・1280×720</p>
         <p>檔案：demo.mp4、demo.gif</p>
-        <p>1 title 3s<br>2 browser 5s<br>3 terminal 5s<br>4 browser 4s<br>5 points 4s<br>6 outro 3s</p>
+        <p>1 title 3s<br>2 browser 5s<br>3 browser 5s<br>4 points 4s<br>5 browser 4s<br>6 outro 3s</p>
       </aside>
     </div>
   </div>
@@ -126,23 +126,23 @@
 (() => {
   // ── 時間軸（秒）────────────────────────────────────────────
   const T = {
-    type0: 0.4, type1: 2.0, send: 2.3, pane: 2.5,
-    read: 2.9, read2: 3.4, writeScript: 4.0, lines0: 4.1, step1: 5.1,
-    tool2: 5.5, show: 5.8, pickSec: 7.6, confirm: 8.8,
-    writeBoard: 9.6, board: 10.1, frames: 10.9, say3: 11.1,
-    up: 12.9, reframe: 13.4, compose: 15.0,
-    render0: 15.5, render1: 18.3, done: 18.5, result: 19.2, end: 26,
+    type0: 0.6, type1: 2.4, send: 3.4, pane: 3.7,
+    read: 4.3, read2: 5.1, writeScript: 6.0, lines0: 6.2, step1: 7.8,
+    tool2: 8.4, show: 8.8, pickSec: 11.2, confirm: 12.8,
+    writeBoard: 13.8, board: 14.5, frames: 15.5, say3: 15.8,
+    up: 18.4, reframe: 19.4, compose: 21.0,
+    render0: 21.6, render1: 25.0, done: 25.3, result: 26.0, end: 36,
   };
   window.DURATION = T.end;
 
-  const PROMPT = "/make-demo-video 把 weather-board 做成 README 用的 demo 影片";
+  const PROMPT = "/make-demo-video https://claude.tw/";
   const SCENES = [
-    { kind: "title", s: 3, line: "出門前，一眼看完今天天氣" },
-    { kind: "browser", s: 5, line: "現在溫度、體感、降雨機率，一張卡片看完" },
-    { kind: "browser", s: 4, line: "往下滑，24 小時與一週預報" },
-    { kind: "terminal", s: 5, line: "問 Claude 天氣小幫手，它會自己去查資料" },
-    { kind: "points", s: 4, line: "三個人，一週做完" },
-    { kind: "outro", s: 3, line: "原始碼在這裡" },
+    { kind: "title", s: 3, line: "一起動手做，把 AI 變成隊友" },
+    { kind: "browser", s: 5, line: "台灣 Claude 使用者交流、分享的基地" },
+    { kind: "browser", s: 5, line: "近期活動：Claude Code Workshop，一鍵報名" },
+    { kind: "browser", s: 4, line: "活動結束後，話題在 Discord 繼續" },
+    { kind: "points", s: 4, line: "每個月都有新活動" },
+    { kind: "outro", s: 3, line: "報名下一場" },
   ];
   const STYLES = [
     { id: "screenplay", name: "紙卡劇本", swatch: ["#22324d", "#ffffff", "#1c1c1c", "#ffe14d"] },
@@ -156,15 +156,15 @@
 
   // 游標：到達時間、目標（data-k）、是否在到達後點一下
   const PATH = [
-    { t: 6.4, xy: [1010, 640] },
-    { t: 7.3, k: "sec-30", click: T.pickSec },
-    { t: 8.5, k: "confirm", click: T.confirm },
-    { t: 11.6, k: "confirm-hold" },
-    { t: 12.6, k: "up-3", click: T.up },
-    { t: 14.6, k: "compose", click: T.compose },
-    { t: 15.8, k: "compose-hold" },
+    { t: 9.6, xy: [1010, 640] },
+    { t: 10.8, k: "sec-30", click: T.pickSec },
+    { t: 12.4, k: "confirm", click: T.confirm },
+    { t: 16.6, k: "confirm-hold" },
+    { t: 18.0, k: "up-4", click: T.up },
+    { t: 20.6, k: "compose", click: T.compose },
+    { t: 21.8, k: "compose-hold" },
   ];
-  const CURSOR_ON = [6.4, 15.8];
+  const CURSOR_ON = [9.6, 21.8];
 
   const clamp = (x) => Math.max(0, Math.min(1, x));
   const ease = (k) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
@@ -175,10 +175,10 @@
   function chat(t) {
     const items = [];
     const at = (time, html) => { if (t >= time) items.push(html); };
-    at(T.send, `<div class="msg-user"><code>/make-demo-video</code> 把 weather-board 做成 README 用的 demo 影片</div>`);
+    at(T.send, `<div class="msg-user"><code>/make-demo-video</code> https://claude.tw/</div>`);
     if (t >= T.send && t < T.read) items.push(`<div class="spin">✻ 讀素材中…</div>`);
-    at(T.read, `<div class="tool"><b>Read</b>(README.md)</div>`);
-    at(T.read2, `<div class="tool"><b>Bash</b>(node scripts/capture.mjs http://localhost:3000)<span class="sub">⎿ shot-1.png、shot-2.png</span></div>`);
+    at(T.read, `<div class="tool"><b>WebFetch</b>(https://claude.tw/)</div>`);
+    at(T.read2, `<div class="tool"><b>Bash</b>(node scripts/capture.mjs https://claude.tw/ --shots 3)<span class="sub">⎿ shot-1.png、shot-2.png、shot-3.png</span></div>`);
     at(T.writeScript, `<div class="tool"><b>Write</b>(docs/demo/script.md)<span class="sub">⎿ 6 句</span></div>`);
     at(T.step1, `<div class="say"><em>① 腳本</em>｜6 句，寫在 docs/demo/script.md</div>`);
     at(T.tool2, `<div class="tool"><b>make-demo-video · show_options</b>(out: docs/demo)</div>`);
@@ -223,7 +223,7 @@
     // ①
     let s1 = head(0, "腳本", done[0] ? `docs/demo/script.md・6 句${hasBoard ? "（在下方分鏡板編輯）" : ""}` : "讀素材中…", done, current);
     if (!hasBoard && t >= T.lines0) {
-      const shown = SCENES.filter((_, i) => t >= T.lines0 + i * 0.15);
+      const shown = SCENES.filter((_, i) => t >= T.lines0 + i * 0.25);
       s1 += `<div class="indent">${shown.map((sc, i) => `<div class="line"><span class="t">${String(i + 1).padStart(2, " ")}. ${esc(sc.line)}</span>${i > 0 ? btn("↑", "", "small") : ""}${i < 5 ? btn("↓", "", "small") : ""}${btn("✕", "", "small")}</div>`).join("")}</div>`;
     }
     parts.push(`<div>${s1}</div>`);
@@ -250,16 +250,16 @@
     parts.push(`<div data-k="confirm-hold">${s2}</div>`);
 
     // ③
-    const framing = (t >= T.board && t < T.frames) || (t >= T.up + 0.45 && t < T.reframe);
+    const framing = (t >= T.board && t < T.frames) || (t >= T.up + 0.65 && t < T.reframe);
     let s3 = head(2, "分鏡板", hasBoard ? `docs/demo/storyboard.json・6 幕 24 秒${framing ? "・產生縮圖中…" : ""}` : "", done, current);
     if (hasBoard) {
-      // 按 ↑ 之後第 4 幕與第 3 幕交換；0.4 秒內滑過去
-      const swap = ease(clamp((t - T.up) / 0.4));
-      const order = swap >= 1 ? [0, 1, 3, 2, 4, 5] : [0, 1, 2, 3, 4, 5];
+      // 按第 5 幕的 ↑ 之後，第 5 幕與第 4 幕交換；0.6 秒內滑過去
+      const swap = ease(clamp((t - T.up) / 0.6));
+      const order = swap >= 1 ? [0, 1, 2, 4, 3, 5] : [0, 1, 2, 3, 4, 5];
       const cards = order.map((id, i) => {
         const sc = SCENES[id];
         let dy = 0;
-        if (swap > 0 && swap < 1) dy = id === 3 ? -66 * swap : id === 2 ? 66 * swap : 0;
+        if (swap > 0 && swap < 1) dy = id === 4 ? -66 * swap : id === 3 ? 66 * swap : 0;
         const thumb = t < T.frames ? "產生縮圖中…" : `<img src="frames/scene-${id + 1}.png">`;
         const k = (name) => `${name}-${i}`;
         // 往上移的那張浮在上層，交錯時不會跟另一張疊成一團
