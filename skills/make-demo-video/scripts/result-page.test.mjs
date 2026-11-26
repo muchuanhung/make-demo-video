@@ -10,7 +10,7 @@ const board = (portrait, extra = {}) => ({
   title: "示範 <片>", url: "https://example.com/", portrait,
   width: portrait ? 720 : 1280, height: portrait ? 1280 : 720, duration: 12, raw: [{}, {}, {}], ...extra,
 });
-const files = { mp4: "demo.mp4", mp4Bytes: 2 * 1048576, gif: "demo.gif", gifBytes: 3 * 1048576, gifWidth: 640, qrSvg: "<svg></svg>", credit: { url: "https://github.com/x/make-demo-video" } };
+const files = { mp4: "demo.mp4", mp4Bytes: 2 * 1048576, gif: "demo.gif", gifBytes: 3 * 1048576, gifWidth: 640, qrSvg: "<svg></svg>", credit: { url: "https://github.com/x/make-demo-video", qrSvg: "<svg id=\"repo-qr\"></svg>" } };
 
 test("直式用左影片右介紹，橫式用影片全寬加下載卡", () => {
   assert.match(resultPage(board(true), studio, files), /<main class="portrait">/);
@@ -66,7 +66,30 @@ test("按鈕字在強調色上對比不夠時換成主文字色，夠的時候�
 test("出處分行顯示，並請大家到 repo 點 Star", () => {
   for (const portrait of [true, false]) {
     const html = resultPage(board(portrait), studio, files);
-    assert.match(html, /<span>用 <b>make-demo-video<\/b> 做的<\/span>\s*<a href="https:\/\/github\.com\/x\/make-demo-video">/);
+    // 網址不另外寫一行：QR code 和點星按鈕都已經連到 repo
+    assert.match(html, /<span>用 <b>make-demo-video<\/b> 做的<\/span>\s*<span>有用的話點個星/);
+    assert.doesNotMatch(html, />github\.com\/x\/make-demo-video</);
     assert.match(html, /class="btn star" href="https:\/\/github\.com\/x\/make-demo-video">⭐ GitHub 點星/);
   }
+});
+
+test("出處卡片取代「用手機掃描開啟」：放 repo 的 QR code、網址與點星，網站的 QR 不再另外放", () => {
+  for (const portrait of [true, false]) {
+    const html = resultPage(board(portrait), studio, files);
+    const card = html.match(/<section class="card credit"[\s\S]*?<\/section>/)?.[0] ?? "";
+    assert.match(card, /<div class="qr" role="img" aria-label="github\.com\/x\/make-demo-video 的 QR code"><svg id="repo-qr"><\/svg><\/div>/);
+    assert.match(card, /⭐ GitHub 點星/);
+    assert.equal(html.match(/class="qr"/g).length, 1, "只有 repo 一個 QR");
+    assert.doesNotMatch(html, /用手機掃描開啟|影片裡介紹的網站/);
+    assert.doesNotMatch(html, /<footer class="credit">/);
+  }
+  // 沒有 QR（例如 loadCredit 舊的回傳值）時卡片只放文字，不放空的 QR 框
+  const html = resultPage(board(true), studio, { ...files, credit: { url: files.credit.url } });
+  assert.doesNotMatch(html, /class="qr"/);
+});
+
+test("沒有出處（影片介紹的就是這個 repo，或不是以 plugin 安裝）時，照舊放網站的 QR", () => {
+  const { credit, ...rest } = files;
+  assert.match(resultPage(board(true), studio, rest), /用手機掃描開啟/);
+  assert.match(resultPage(board(false), studio, rest), /影片裡介紹的網站/);
 });
