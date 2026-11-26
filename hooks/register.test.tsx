@@ -14,6 +14,7 @@ const CUTS: Record<string, object> = {
   'fast-tour': { id: 'fast-tour', name: '快節奏導覽', suits: '有網站可截圖的產品', defaults: { aspect: '16:9', seconds: 15 } },
   'pain-point': { id: 'pain-point', name: '痛點解法', suits: '先講問題再秀解法', defaults: { aspect: '9:16', seconds: 30 } },
   signature: { id: 'signature', name: '招牌片', mode: 'generate', suits: '發表會開場', defaults: { aspect: '9:16', seconds: 15 } },
+  walkthrough: { id: 'walkthrough', name: '操作示範', fixedShots: true, aspects: ['16:9'], suits: '有操作流程的網站', defaults: { aspect: '16:9', seconds: 22 } },
 }
 
 /** failReads：路徑符合時讀取失敗，模擬實機上讀不到檔案。 */
@@ -222,6 +223,46 @@ test('面板跟著四步前進：先選剪法與設定、再寫腳本、分鏡�
   await $.tool.call({ tool: 'Write', file_path: 'docs/demo/storyboard.json', content: JSON.stringify(BOARD) })
   await ui.redraw()
   expect(await ui.find({ type: 'Button', key: 'compose' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('④ 加配樂：開關打開後合成影片會請 Claude 加 --music；算過之後切換開關可以再合成一次', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted } = engine(on, fs, { toolStdout: '算圖中 100%\n完成，花了 13.2 秒（影片 12 秒）' })
+  await begin($)
+  await writeBoth($, fs)
+  const ui = await $.ui.mount(PANE)
+
+  // 預設不加配樂：訊息裡沒有 --music
+  expect((await ui.find({ type: 'Button', key: 'music' }))?.text).toBe('○ ♪ 加配樂')
+  await ui.press({ key: 'compose' })
+  expect(submitted.at(-1)).toMatch(/^合成影片：.*算圖$/)
+
+  // 打開配樂再按：訊息帶「加配樂（--music）」
+  await ui.press({ key: 'music' })
+  await ui.redraw()
+  expect((await ui.find({ type: 'Button', key: 'music' }))?.text).toBe('● ♪ 加配樂')
+  await ui.press({ key: 'compose' })
+  expect(submitted.at(-1)).toMatch(/^合成影片：.*算圖，加配樂（--music）$/)
+
+  // Claude 加 --music 算完：完成那一行標「有配樂」，合成按鈕收起來，開關還在
+  await $.tool.call({ tool: 'Bash', command: 'node render.mjs --storyboard docs/demo/storyboard.json --style docs/demo/style.json --out docs/demo --music' })
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /demo\.mp4/ }))?.text).toContain('有配樂')
+  expect(await ui.find({ type: 'Button', key: 'compose' })).toBeFalsy()
+  expect((await ui.find({ type: 'Button', key: 'music' }))?.text).toBe('● ♪ 加配樂')
+
+  // 關掉配樂：可以再合成一次，訊息不帶 --music
+  await ui.press({ key: 'music' })
+  await ui.redraw()
+  await ui.press({ key: 'compose' })
+  expect(submitted.at(-1)).toMatch(/^合成影片：.*算圖$/)
+
+  // 使用者在對話裡要配樂、Claude 直接加 --music 算圖：開關跟著打開
+  await $.tool.call({ tool: 'Bash', command: 'node render.mjs --storyboard docs/demo/storyboard.json --style docs/demo/style.json --out docs/demo --music' })
+  await ui.redraw()
+  expect((await ui.find({ type: 'Button', key: 'music' }))?.text).toBe('● ♪ 加配樂')
+  expect(await ui.find({ type: 'Button', key: 'compose' })).toBeFalsy()
   await ui.unmount()
 })
 
@@ -686,6 +727,81 @@ const BEATS = {
   beats: Array.from({ length: 6 }, (_, k) => ({ beat: k + 1, at: k * 0.5, file: `beats/b0${k}.png`, thumb: `beats/b0${k}.jpg` })),
   problems: [],
 }
+
+test('操作示範（鏡頭段數固定）：① 不問幕數；腳本 4 句、分鏡 8 段不算對不上，不出現「照腳本重排」', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted } = engine(on, fs)
+  await begin($)
+  const ui = await $.ui.mount(PANE)
+
+  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', cuts: ['walkthrough', 'fast-tour'], reason: '有操作路徑', scenes: 8 })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'scenes-up' })).toBeFalsy()
+  // 改選快節奏導覽時幕數又出現，選回操作示範再確定
+  await ui.press({ key: 'cut-fast-tour' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'scenes-up' })).toBeTruthy()
+  await ui.press({ key: 'cut-walkthrough' })
+  await ui.redraw()
+  await ui.press({ key: 'confirm' })
+  expect(submitted.at(-1)).toBe('① 選好了：剪法 操作示範（walkthrough）、比例 16:9、約 20 秒')
+
+  // 標語＋3 步操作＝4 句，鏡頭固定 8 段
+  const board = {
+    title: 't',
+    cut: 'walkthrough',
+    aspect: '16:9',
+    beat: 0.5,
+    scenes: [
+      { shot: 'reveal', image: 's3.png', to: '夜晚檯燈' },
+      { shot: 'home', image: 's1.png', heading: 'Tiny worlds,' },
+      { shot: 'seek', image: 's1.png', to: '黏土' },
+      { shot: 'burst', images: [{ image: 'a.png' }, { image: 'b.png' }] },
+      { shot: 'click', image: 's1.png', to: '黏土' },
+      { shot: 'expand', image: 's2.png' },
+      { shot: 'focus', image: 's2.png', press: '夜晚檯燈', after: 's3.png' },
+      { shot: 'dock', heading: "sui's playground", sub: 'Tiny worlds, many styles' },
+    ],
+  }
+  await writeBoth($, fs, board, '1. Tiny worlds, many styles\n2. 點「黏土」\n3. 看「黏土公仔工作室」\n4. 按「夜晚檯燈」\n')
+  await ui.redraw()
+  expect((await ui.find({ type: 'Text', text: /8 幕/ }))?.text).toContain('storyboard.json')
+  expect(await ui.find({ type: 'Text', text: /對不上/ })).toBeFalsy()
+  expect(await ui.find({ type: 'Button', key: 'rebuild' })).toBeFalsy()
+  // ① 收成一行時也不寫幕數
+  expect((await ui.find({ type: 'Text', text: /操作示範（walkthrough）・/ }))?.text).not.toContain('幕')
+
+  // ① 重新選只改秒數：照新設定重排，摘要不帶幕數
+  await ui.press({ key: 'repick' })
+  await ui.redraw()
+  await ui.press({ key: 'sec-30' })
+  await ui.press({ key: 'confirm' })
+  expect(submitted.at(-1)).toBe('① 改選：剪法 操作示範（walkthrough）、比例 16:9、約 30 秒（原本 16:9、約 20 秒）；照新設定重排分鏡表')
+  await ui.unmount()
+})
+
+test('只做一種比例的剪法（meta.json 的 aspects）：① 不給選別的比例；從直式換過來時比例跟著改', async ($, on) => {
+  const fs = fakeFs(on)
+  const { submitted } = engine(on, fs)
+  await begin($)
+  const ui = await $.ui.mount(PANE)
+
+  await $.tool.call({ tool: 'mcp__make-demo-video__show_options', out: 'docs/demo', cuts: ['walkthrough', 'fast-tour'], reason: '有操作路徑' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'aspect-9:16' })).toBeFalsy()
+  expect(await ui.find({ type: 'Button', key: 'aspect-16:9' })).toBeTruthy()
+
+  // 快節奏導覽兩種都能選；先選直式，再換回操作示範
+  await ui.press({ key: 'cut-fast-tour' })
+  await ui.redraw()
+  await ui.press({ key: 'aspect-9:16' })
+  await ui.press({ key: 'cut-walkthrough' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Button', key: 'aspect-9:16' })).toBeFalsy()
+  await ui.press({ key: 'confirm' })
+  expect(submitted.at(-1)).toBe('① 選好了：剪法 操作示範（walkthrough）、比例 16:9、約 20 秒')
+  await ui.unmount()
+})
 
 test('招牌片（生成式剪法）：① 不問幕數 → ③ 在面板挑概念 → 逐拍分鏡板改一拍 → ④ 合成影片、結果頁', async ($, on) => {
   const fs = fakeFs(on)

@@ -34,7 +34,7 @@ node <skill>/scripts/capture.mjs <網址> --out <out> --full --name step-2 --cli
 
 ## 鏡頭順序（③）
 
-固定八段，順序不換；`burst` 素材不夠時改法見下面。
+固定八段，順序不換；`burst` 素材不夠時改法見下面。段數不跟腳本句數走（`meta.json` 的 `fixedShots`）：一句可能分到好幾段，例如標語拆在 `home` 與 `dock`、一步操作分成 `seek` 與 `click`，所以 ① 不選幕數，4 句腳本排 8 段是正常的。
 
 | 段 | 鏡頭 | 拍 | 畫面 | 寫法 |
 |---|---|---|---|---|

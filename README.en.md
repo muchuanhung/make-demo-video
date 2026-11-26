@@ -26,7 +26,7 @@ The video is computed from the storyboard, not recorded: change a caption and it
 
 A cut decides how the video is edited (script shape, shot order, pacing). Cuts live in `skills/make-demo-video/cuts/`, one folder each. In step ① Claude recommends 1–3 of them for your material, with a reason for the first.
 
-| | Fast tour `fast-tour` | Signature `signature` | Walkthrough `walkthrough` |
+| | Fast tour `fast-tour` | Signature `signature` | Walkthrough `walkthrough` (experimental) |
 |---|---|---|---|
 | | ![Fast tour](skills/make-demo-video/cuts/fast-tour/thumb.png) | ![Signature](skills/make-demo-video/cuts/signature/thumb.png) | ![Walkthrough](skills/make-demo-video/cuts/walkthrough/thumb.png) |
 | Answers | **What** the product has | **Who** it is | **How** to use it |
@@ -36,7 +36,11 @@ A cut decides how the video is edited (script shape, shot order, pacing). Cuts l
 | Defaults | 16:9, 15 s, 0.4 s per beat | 9:16, 15 s, 0.5 s per beat | 16:9 only, 22 s, 0.5 s per beat |
 | How it's built | Combines fixed shot templates | Generative: pick a concept in the pane, and Claude writes a fresh `reel.html` each time | Combines fixed shot templates |
 
-Fast tour and walkthrough only combine fixed shot templates, so the same storyboard always renders the same video. Signature gives a different concept and look every run, and takes about 10 minutes and 100,000-plus tokens from reading the material to the finished video; once it's final, caption changes and re-renders edit the same `reel.html`, and each beat-level edit takes 1–3 minutes.
+Fast tour and walkthrough only combine fixed shot templates, so the same storyboard always renders the same video.
+
+Walkthrough is experimental and frozen for now: it only renders 16:9, and the pane doesn't offer 9:16. It always has 8 segments, and the pane can't add or remove script lines yet; to show one more step (up to 5), add a line to `script.md` and ask Claude in the chat to re-plan from the script.
+
+ Signature gives a different concept and look every run, and takes about 10 minutes and 100,000-plus tokens from reading the material to the finished video; once it's final, caption changes and re-renders edit the same `reel.html`, and each beat-level edit takes 1–3 minutes.
 
 ### Install
 

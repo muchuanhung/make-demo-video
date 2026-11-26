@@ -44,6 +44,8 @@ const FRESH: Run = {
   isScriptEdited: false,
   renderedAt: null,
   renderSeconds: null,
+  music: false,
+  renderedMusic: null,
   note: null,
   framesAt: null,
   isFraming: false,
@@ -60,14 +62,38 @@ const FRESH: Run = {
 }
 
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
-const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-9' })
+const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-10' })
 
 /** thumb：PNG 縮圖路徑（終端機用 Image 畫）；svg：VS Code、桌面版等畫面用的縮圖（它們沒有 Image，但有 Svg）。 */
 type Thumb = { thumb: string | null; svg: string | null }
 /** 內建風格只用來顯示名稱：使用者在對話裡要求換成某個內建風格時，Claude 用它算圖，面板跟著顯示。 */
 type StyleInfo = { id: string; name: string }
-/** 剪法包 cuts/<id>/meta.json 裡面板要用的欄位；defaults 是剪法建議的比例與秒數。 */
-type CutInfo = Thumb & { id: string; name: string; suits: string; mode: string; defaults: { aspect?: Aspect; seconds?: number } }
+/**
+ * 剪法包 cuts/<id>/meta.json 裡面板要用的欄位；defaults 是剪法建議的比例與秒數。
+ * fixedShots：鏡頭順序與段數固定（操作示範固定 8 段），一句腳本可能分到好幾段，幕數不由使用者選、也不該等於句數。
+ * aspects：這個剪法做得出來的比例（操作示範只做 16:9）；meta.json 沒寫時兩種都行。
+ */
+type CutInfo = Thumb & {
+  id: string
+  name: string
+  suits: string
+  mode: string
+  fixedShots: boolean
+  aspects: Aspect[]
+  defaults: { aspect?: Aspect; seconds?: number }
+}
+
+const ASPECTS: Aspect[] = ['16:9', '9:16']
+const isAspect = (a: unknown): a is Aspect => a === '16:9' || a === '9:16'
+/** 剪法做得出來的比例；查不到剪法時兩種都行。 */
+const aspectsOf = (cut: string): Aspect[] => cuts.find(k => k.id === cut)?.aspects ?? ASPECTS
+/** 比例不在剪法做得出來的範圍時，改成剪法的預設（或第一個做得出來的）。 */
+function fitAspect(cut: string, aspect: Aspect): Aspect {
+  const ok = aspectsOf(cut)
+  if (ok.includes(aspect)) return aspect
+  const d = cuts.find(k => k.id === cut)?.defaults.aspect
+  return d && ok.includes(d) ? d : (ok[0] ?? aspect)
+}
 
 /**
  * 風格縮圖的 SVG：只是把 PNG 縮圖包起來，PNG（scripts/thumbs.mjs 產生）是唯一的來源，
@@ -218,16 +244,21 @@ async function loadCuts($: $Like) {
         name?: string
         suits?: string
         mode?: string
+        fixedShots?: boolean
+        aspects?: unknown
         defaults?: { aspect?: string; seconds?: number }
       }
       const d = meta.defaults ?? {}
+      const aspects = Array.isArray(meta.aspects) ? meta.aspects.filter(isAspect) : []
       found.push({
         id: meta.id ?? entry.name,
         name: meta.name ?? entry.name,
         suits: meta.suits ?? '',
         mode: meta.mode ?? 'shots',
+        fixedShots: meta.fixedShots === true,
+        aspects: aspects.length > 0 ? aspects : ASPECTS,
         defaults: {
-          aspect: d.aspect === '9:16' || d.aspect === '16:9' ? d.aspect : undefined,
+          aspect: isAspect(d.aspect) ? d.aspect : undefined,
           seconds: typeof d.seconds === 'number' ? d.seconds : undefined,
         },
         ...(await loadThumb($, `${dir}/${entry.name}/thumb.png`)),
@@ -636,7 +667,7 @@ export const register: Register = on => {
             type: 'string',
             description: '一句話說明為什麼第一個剪法適合這次的素材，要提到素材本身（例如「作品集網站、截圖完整，適合捲動導覽」）',
           },
-          scenes: { type: 'integer', description: '建議幕數；已備好腳本時是腳本句數' },
+          scenes: { type: 'integer', description: '建議幕數；已備好腳本時是腳本句數。生成式剪法與鏡頭段數固定的剪法（meta.json 有 fixedShots）不看幕數' },
           seconds: { type: 'integer', description: '建議的總秒數' },
         },
         required: ['out'],
@@ -703,7 +734,7 @@ export const register: Register = on => {
         choice: {
           cut,
           style: CUSTOM,
-          aspect: defaults.aspect ?? x.choice.aspect,
+          aspect: fitAspect(cut, defaults.aspect ?? x.choice.aspect),
           scenes: clamp(Number(args.scenes) || x.script.length || x.choice.scenes, MIN_SCENES, MAX_SCENES),
           seconds: nearestSeconds(Number(args.seconds) || defaults.seconds || x.choice.seconds),
         },
@@ -797,6 +828,9 @@ export const register: Register = on => {
         renderedAt: took ? now : x.renderedAt,
         renderSeconds: took ? Number(took[1]) : x.renderSeconds,
         isEdited: took ? false : x.isEdited,
+        // 記下這次有沒有配樂；使用者在對話裡要配樂（或拿掉）時，④ 的開關也跟著變
+        renderedMusic: took ? /--music\b/.test(command) : x.renderedMusic,
+        music: took ? /--music\b/.test(command) : x.music,
         isChosen: x.isChosen || Boolean(used),
         choice: used ? { ...x.choice, style: used } : x.choice,
       }))
@@ -857,13 +891,18 @@ export const register: Register = on => {
 
     // 生成式剪法（招牌片）的 ③ 是逐拍分鏡板，不是分鏡表
     const generate = cuts.find(k => k.id === r.choice.cut)?.mode === 'generate'
+    // 幕數不由使用者選的剪法：生成式（不看幕數）、鏡頭段數固定（操作示範）
+    const fixedShots = cuts.find(k => k.id === r.choice.cut)?.fixedShots === true
+    const asksScenes = !generate && !fixedShots
     const hasBoard = generate ? r.beats.length > 0 : r.scenes.length > 0
+    // ④ 算過之後切換了「加配樂」：要再合成一次（招牌片一定有配樂，不看開關）
+    const musicChanged = !generate && r.renderedAt !== null && r.music !== r.renderedMusic
     // ① 在使用者指定好一切、Claude 跳過面板時，寫出腳本或分鏡表也算選好了
     const done = [
       !r.isPicking && (r.isChosen || r.script.length > 0 || hasBoard),
       r.script.length > 0,
       hasBoard,
-      r.renderedAt !== null && !r.isEdited,
+      r.renderedAt !== null && !r.isEdited && !musicChanged,
     ]
     const current = done.indexOf(false)
     const setChoice = (patch: Partial<Choice>) => update($, run, x => ({ ...x, choice: { ...x.choice, ...patch } }))
@@ -946,7 +985,7 @@ export const register: Register = on => {
             label={`${isOn ? '●' : '○'} ${i + 1} ${k.name}`}
             hotkey={String(i + 1)}
             variant={isOn ? 'primary' : 'secondary'}
-            onPress={() => setChoice({ cut: k.id })}
+            onPress={() => setChoice({ cut: k.id, aspect: fitAspect(k.id, c.aspect) })}
           />
           {r.suggested.includes(k.id) ? <Text color="warning">推薦</Text> : null}
           <Text dimColor wrap="wrap">
@@ -964,8 +1003,10 @@ export const register: Register = on => {
       const was = x.pickedFrom
       const now = x.choice
       await update($, run, y => ({ ...y, isChosen: true, isPicking: false, pickedFrom: null }))
-      const isGen = cuts.find(k => k.id === now.cut)?.mode === 'generate'
-      const summary = `剪法 ${cutLabel(now.cut)}、比例 ${now.aspect}、約 ${now.seconds} 秒${isGen ? '' : `、${now.scenes} 幕`}`
+      const cut = cuts.find(k => k.id === now.cut)
+      const isGen = cut?.mode === 'generate'
+      const hasScenes = !isGen && !cut?.fixedShots
+      const summary = `剪法 ${cutLabel(now.cut)}、比例 ${now.aspect}、約 ${now.seconds} 秒${hasScenes ? `、${now.scenes} 幕` : ''}`
       const hasWork = x.scenes.length > 0 || x.beats.length > 0
       if (was && was.cut !== now.cut && (x.script.length > 0 || hasWork)) {
         // 剪法決定腳本怎麼寫：換剪法就要照新剪法重寫腳本，再重排分鏡
@@ -986,10 +1027,10 @@ export const register: Register = on => {
         }
         return
       }
-      const replan = was.aspect !== now.aspect || was.seconds !== now.seconds || was.scenes !== now.scenes
+      const replan = was.aspect !== now.aspect || was.seconds !== now.seconds || (hasScenes && was.scenes !== now.scenes)
       if (replan) {
         await $.prompt.submit({
-          text: `① 改選：${summary}（原本 ${was.aspect}、約 ${was.seconds} 秒、${was.scenes} 幕）；照新設定重排分鏡表`,
+          text: `① 改選：${summary}（原本 ${was.aspect}、約 ${was.seconds} 秒${hasScenes ? `、${was.scenes} 幕` : ''}）；照新設定重排分鏡表`,
         })
       }
     }
@@ -1001,7 +1042,7 @@ export const register: Register = on => {
           0,
           '剪法與設定',
           done[0] || r.isChosen
-            ? `${cutLabel(c.cut)}・${generate ? '從素材取色' : styleLabel(c.style)}・${c.aspect}・${c.seconds} 秒${generate ? '' : `・${c.scenes} 幕`}`
+            ? `${cutLabel(c.cut)}・${generate ? '從素材取色' : styleLabel(c.style)}・${c.aspect}・${c.seconds} 秒${asksScenes ? `・${c.scenes} 幕` : ''}`
             : pick
               ? r.pickedFrom
                 ? '重新選，按「確定」'
@@ -1026,15 +1067,16 @@ export const register: Register = on => {
             ) : null}
             <Box flexDirection="row">
               <Text>比例 </Text>
-              {(['16:9', '9:16'] as Aspect[]).map(a =>
+              {aspectsOf(c.cut).map(a =>
                 choiceButton(`aspect-${a}`, a === '16:9' ? '16:9 橫式' : '9:16 直式', c.aspect === a, () => setChoice({ aspect: a })),
               )}
+              {aspectsOf(c.cut).length === 1 ? <Text dimColor> 這個剪法只做 {aspectsOf(c.cut)[0]}</Text> : null}
             </Box>
             <Box flexDirection="row">
               <Text>秒數 </Text>
               {SECONDS.map(s => choiceButton(`sec-${s}`, `${s}s`, c.seconds === s, () => setChoice({ seconds: s })))}
             </Box>
-            {generate ? null : <Box flexDirection="row">
+            {asksScenes ? <Box flexDirection="row">
               <Text>幕數 </Text>
               <Button key="scenes-down" label="−" onPress={() => setChoice({ scenes: clamp(c.scenes - 1, MIN_SCENES, MAX_SCENES) })} />
               <Text> {c.scenes} 幕 </Text>
@@ -1042,7 +1084,7 @@ export const register: Register = on => {
               {r.script.length > 0 && c.scenes !== r.script.length ? (
                 <Text dimColor> （腳本 {r.script.length} 句，Claude 會調整成 {c.scenes} 句）</Text>
               ) : null}
-            </Box>}
+            </Box> : null}
             <Button key="confirm" label="確定 ↵" variant="primary" autoFocus onPress={confirm} />
           </Box>
         ) : null}
@@ -1052,7 +1094,8 @@ export const register: Register = on => {
     // ③ 分鏡板：一張卡＝一句腳本＋這一幕的縮圖
     const total = r.scenes.reduce((sum, s) => sum + s.seconds, 0)
     const portrait = c.aspect === '9:16'
-    const linked = r.script.length === r.scenes.length
+    // 一句一幕時卡片顯示腳本句子、插一句會同步寫回 script.md；段數固定的剪法一句會分到好幾段，不算對得上
+    const linked = !fixedShots && r.script.length === r.scenes.length
     const framesAt = r.framesAt ?? 0
     const framePath = (i: number) => join(join(r.out ?? '', 'frames'), `scene-${i + 1}.png`)
     // 縮圖 SVG 的額度：扣掉 ① 剪法卡縮圖（只有選剪法時才畫）
@@ -1314,7 +1357,7 @@ export const register: Register = on => {
             ? `${join(r.out ?? '', 'storyboard.json')}・${r.scenes.length} 幕 ${Math.round(total)} 秒${r.isFraming ? '・產生縮圖中…' : ''}`
             : '',
         )}
-        {hasBoard && !linked && r.script.length > 0 ? (
+        {hasBoard && !linked && !fixedShots && r.script.length > 0 ? (
           <Box flexDirection="row" paddingLeft={3} gap={1}>
             <Text color="warning">
               腳本 {r.script.length} 句、分鏡 {r.scenes.length} 幕，對不上
@@ -1339,34 +1382,47 @@ export const register: Register = on => {
     )
 
     // ④ 合成影片：確認分鏡板後才算
-    const canCompose = hasBoard && !r.isPicking && !r.isConceptPicking && (r.renderedAt === null || r.isEdited)
+    // 加配樂開關只給分鏡表剪法（招牌片的 signature.mjs 一定有配樂）
+    const showMusic = hasBoard && !generate && !r.isPicking
+    const canCompose =
+      hasBoard && !r.isPicking && !r.isConceptPicking && (r.renderedAt === null || r.isEdited || musicChanged)
     const step4 = (
       <Box flexDirection="column">
         {head(
           3,
           '合成影片',
           done[3]
-            ? `${join(r.out ?? '', 'demo.mp4')}${r.renderSeconds ? `・${r.renderSeconds} 秒` : ''} → 結果頁已打開`
+            ? `${join(r.out ?? '', 'demo.mp4')}${r.renderSeconds ? `・${r.renderSeconds} 秒` : ''}${r.renderedMusic ? '・有配樂' : ''} → 結果頁已打開`
             : canCompose
               ? generate
                 ? '逐拍看過後按「合成影片」（約 1.5 分鐘）'
                 : '確認分鏡板後按「合成影片」'
               : '',
         )}
-        {canCompose ? (
-          <Box paddingLeft={3}>
-            <Button
-              key="compose"
-              label="▶ 合成影片"
-              variant="primary"
-              onPress={() =>
-                ask(
-                  generate
-                    ? '合成影片：逐拍分鏡板確認好了，照目前的 reel.html 算圖'
-                    : `合成影片：分鏡板確認好了，照目前的 storyboard.json、用風格 ${styleArg(r)} 算圖`,
-                )
-              }
-            />
+        {showMusic || canCompose ? (
+          <Box paddingLeft={3} gap={1}>
+            {showMusic ? (
+              <Button
+                key="music"
+                label={`${r.music ? '●' : '○'} ♪ 加配樂`}
+                variant={r.music ? 'primary' : 'secondary'}
+                onPress={() => update($, run, x => ({ ...x, music: !x.music }))}
+              />
+            ) : null}
+            {canCompose ? (
+              <Button
+                key="compose"
+                label="▶ 合成影片"
+                variant="primary"
+                onPress={() =>
+                  ask(
+                    generate
+                      ? '合成影片：逐拍分鏡板確認好了，照目前的 reel.html 算圖'
+                      : `合成影片：分鏡板確認好了，照目前的 storyboard.json、用風格 ${styleArg(r)} 算圖${r.music ? '，加配樂（--music）' : ''}`,
+                  )
+                }
+              />
+            ) : null}
           </Box>
         ) : null}
       </Box>

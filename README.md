@@ -26,7 +26,7 @@ Claude Code 的 skill＋mod：幾分鐘把素材做成 demo 影片（MP4＋GIF�
 
 剪法決定怎麼剪（腳本寫法、鏡頭順序、節奏），放在 `skills/make-demo-video/cuts/`，一包一個資料夾。① 會依素材推薦 1–3 包，第一個附上理由。
 
-| | 快節奏導覽 `fast-tour` | 招牌片 `signature` | 操作示範 `walkthrough` |
+| | 快節奏導覽 `fast-tour` | 招牌片 `signature` | 操作示範 `walkthrough`（實驗中） |
 |---|---|---|---|
 | | ![快節奏導覽](skills/make-demo-video/cuts/fast-tour/thumb.png) | ![招牌片](skills/make-demo-video/cuts/signature/thumb.png) | ![操作示範](skills/make-demo-video/cuts/walkthrough/thumb.png) |
 | 回答 | 這產品**有什麼** | 這產品**是誰** | 這產品**怎麼用** |
@@ -36,7 +36,11 @@ Claude Code 的 skill＋mod：幾分鐘把素材做成 demo 影片（MP4＋GIF�
 | 預設 | 16:9、15 秒、一拍 0.4 秒 | 9:16、15 秒、一拍 0.5 秒 | 只做 16:9、22 秒、一拍 0.5 秒 |
 | 做法 | 組合固定的鏡頭模板 | 生成式：先在面板選概念，Claude 每次從零寫 `reel.html` | 組合固定的鏡頭模板 |
 
-快節奏導覽與操作示範只組合固定的鏡頭模板，同一份分鏡表永遠算出同一支片。招牌片每次的概念與畫面都不同，從讀素材到出片約 10 分鐘、十幾萬 token；定稿後改字、重出都從同一份 `reel.html` 改，逐拍修改每次 1–3 分鐘。
+快節奏導覽與操作示範只組合固定的鏡頭模板，同一份分鏡表永遠算出同一支片。
+
+操作示範還在實驗中，功能先凍結：只做 16:9，面板不會給 9:16；鏡頭固定 8 段，面板不能直接增刪腳本句子，要多示範一步（最多 5 步）就在 `script.md` 加一行，再在對話裡請 Claude 照腳本重排。
+
+招牌片每次的概念與畫面都不同，從讀素材到出片約 10 分鐘、十幾萬 token；定稿後改字、重出都從同一份 `reel.html` 改，逐拍修改每次 1–3 分鐘。
 
 ### 安裝
 

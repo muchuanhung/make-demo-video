@@ -41,6 +41,10 @@ export type Run = {
   isScriptEdited: boolean
   renderedAt: number | null
   renderSeconds: number | null
+  /** ④ 的「加配樂」開關：按「合成影片」時請 Claude 加 --music（招牌片本來就有配樂，不看它）。 */
+  music: boolean
+  /** 上次算圖有沒有加 --music；跟 music 不同時可以再按「合成影片」補上或拿掉配樂。還沒算過是 null。 */
+  renderedMusic: boolean | null
   /** 讀檔失敗等狀況的說明，面板最下方用淡色顯示，方便排查。 */
   note: string | null
   /** 分鏡縮圖（frames/scene-N.png）最後產生的時間；也當作圖片的 generation，換圖時畫面才會更新。 */
