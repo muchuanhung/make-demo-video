@@ -1,0 +1,22 @@
+{
+  "title": "walkthrough 範例",
+  "cut": "walkthrough",
+  "aspect": "16:9",
+  "beat": 0.5,
+  "url": "https://muchuan-portfolio.vercel.app/",
+  "scenes": [
+    { "shot": "reveal", "image": "dawnline-full.jpg", "to": "曉行 Dawnline" },
+    { "shot": "home", "image": "home-full.jpg", "heading": "MCH / 洪睦筌" },
+    { "shot": "seek", "image": "home-full.jpg", "to": "看全部作品" },
+    { "shot": "burst", "images": [
+      { "image": "weather-full.jpg", "to": "Weather Board" },
+      { "image": "tictactoe-full.jpg", "to": "Tic-Tac-Toe" },
+      { "image": "dawnline-full.jpg", "to": "曉行 Dawnline" } ] },
+    { "shot": "click", "image": "home-full.jpg", "to": "看全部作品" },
+    { "shot": "expand", "image": "list-full.jpg", "to": "曉行 Dawnline" },
+    { "shot": "click", "image": "list-full.jpg", "to": "曉行 Dawnline" },
+    { "shot": "expand", "image": "dawnline-full.jpg", "to": "曉行 Dawnline" },
+    { "shot": "focus", "image": "dawnline-full.jpg", "mark": "路線示警", "markStyle": "under" },
+    { "shot": "dock", "heading": "MCH / 洪睦筌", "sub": "把想法，做成真的。" }
+  ]
+}

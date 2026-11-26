@@ -1,0 +1,446 @@
+<!doctype html>
+<!--
+  README 的示範片：用招牌片剪法（cuts/signature）做 make-demo-video 自己的 showreel。
+  概念與逐拍見 beats.md；檢查：node skills/make-demo-video/scripts/signature.mjs beats examples/showreel/reel.html
+  算圖：node skills/make-demo-video/scripts/signature.mjs render examples/showreel/reel.html --no-open
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>make-demo-video showreel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700;900&display=block">
+<style>
+  html, body { margin: 0; background: #000; }
+  #stage { position: relative; overflow: hidden; font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+  .abs { position: absolute; left: 0; top: 0; }
+  .t { position: absolute; left: 0; top: 0; white-space: nowrap; line-height: 1; font-weight: 900; letter-spacing: -0.02em; }
+  .tile { position: absolute; border-radius: 10px; overflow: hidden; background: #3a3433; }
+  .tile img, .shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .panel { position: absolute; width: 340px; height: 300px; border-radius: 22px; background: #2e2928; }
+  .panel img { position: absolute; left: 20px; top: 20px; width: 300px; height: 169px; border-radius: 12px; }
+  .panel .name { position: absolute; left: 0; top: 214px; width: 340px; text-align: center; font-size: 38px; font-weight: 900; line-height: 1; color: #fcfaf7; }
+  .shot { position: absolute; border-radius: 12px; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<svg width="0" height="0" style="position:absolute"><defs id="defs"></defs></svg>
+<script>
+window.SIGNATURE = {
+  concept: "一個播放鍵，攤開成分鏡板，再收回播放鍵。",
+  width: 1280, height: 720, duration: 20, beat: 0.5,
+  lines: [
+    { text: "/make-demo-video，一句話出片。", from: 5.0, to: 5.9 },
+    { text: "哪一幕不滿意，只重畫那一幕", from: 13.15, to: 13.95 },
+    { text: "改一句字，約 20 秒重算", from: 15.0, to: 15.9 },
+    { text: "把素材做成 demo 影片。", from: 18.7, to: 19.35 },
+  ],
+};
+const { width: W, height: H, duration: DURATION, beat: BEAT } = window.SIGNATURE;
+const CX = W / 2, CY = H / 2;
+const COL = { bg: "#1f1b1a", ink: "#fcfaf7", accent: "#e2694a" }; // 暖白、深灰、珊瑚橘，深底
+
+// ===== 工具函式（照用） =====
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const P = (t, at, dur) => clamp((t - at) / dur);            // t 在 [at, at+dur] 的進度 0–1
+const lerp = (a, b, k) => a + (b - a) * k;
+const eo = (x) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x));   // 指數減速
+const ei = (x) => (x <= 0 ? 0 : Math.pow(2, 10 * x - 10));   // 指數加速
+const eio = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x < 0.5 ? Math.pow(2, 20 * x - 10) / 2 : (2 - Math.pow(2, -20 * x + 10)) / 2);
+const spring = (sec, w = 14) => (sec <= 0 ? 0 : 1 - (1 + w * sec) * Math.exp(-w * sec)); // 臨界阻尼，不回彈
+function rng(seed) { return () => { seed = (seed + 0x6d2b79f5) | 0; let r = Math.imul(seed ^ (seed >>> 15), 1 | seed); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
+
+// 形狀變形：任何形狀都取樣成 N 個點，同點數才能互相 mix
+const N = 160;
+function resample(poly) {
+  const pts = [...poly, poly[0]], seg = [0];
+  for (let i = 1; i < pts.length; i++) seg.push(seg[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const L = seg[seg.length - 1] || 1, out = new Float64Array(N * 2);
+  let j = 1;
+  for (let i = 0; i < N; i++) {
+    const d = (L * i) / N;
+    while (j < seg.length - 1 && seg[j] < d) j++;
+    const k = (d - seg[j - 1]) / ((seg[j] - seg[j - 1]) || 1);
+    out[i * 2] = lerp(pts[j - 1][0], pts[j][0], k); out[i * 2 + 1] = lerp(pts[j - 1][1], pts[j][1], k);
+  }
+  return out;
+}
+function arc(cx, cy, r, a0, a1, n = 48) { const o = []; for (let i = 0; i <= n; i++) { const a = lerp(a0, a1, i / n); o.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); } return o; }
+const circle = (cx, cy, r) => resample(arc(cx, cy, r, -Math.PI / 2, Math.PI * 1.5, 120).slice(0, -1));
+function roundRect(cx, cy, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  const l = cx - w / 2, rt = cx + w / 2, tp = cy - h / 2, bt = cy + h / 2;
+  return resample([[cx, tp], ...arc(rt - r, tp + r, r, -Math.PI / 2, 0, 12), ...arc(rt - r, bt - r, r, 0, Math.PI / 2, 12), ...arc(l + r, bt - r, r, Math.PI / 2, Math.PI, 12), ...arc(l + r, tp + r, r, Math.PI, Math.PI * 1.5, 12)]);
+}
+const mix = (a, b, k) => { const o = new Float64Array(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] + (b[i] - a[i]) * k; return o; };
+function toPath(p) { let d = "M" + p[0].toFixed(1) + " " + p[1].toFixed(1); for (let i = 1; i < N; i++) d += "L" + p[i * 2].toFixed(1) + " " + p[i * 2 + 1].toFixed(1); return d + "Z"; }
+// 依序套用關鍵格：[{ at, dur, ease, to }]
+function chain(start, kfs, t) { let cur = start; for (const k of kfs) { if (t >= k.at + k.dur) { cur = k.to; continue; } if (t > k.at) cur = mix(cur, k.to, k.ease(P(t, k.at, k.dur))); break; } return cur; }
+
+// 元素與動態模糊：pose(t) 回傳 null＝這格不出現；{ x, y, sx, sy, color, text, clip, size }
+const stage = document.getElementById("stage");
+Object.assign(stage.style, { width: W + "px", height: H + "px" });
+const defs = document.getElementById("defs");
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(parent, css = {}, html = "", cls = "abs") { const e = document.createElement("div"); e.className = cls; Object.assign(e.style, css); if (html) e.innerHTML = html; parent.appendChild(e); return e; }
+const text = (parent, s, size, color, weight = 900) => el(parent, { fontSize: size + "px", color, fontWeight: weight }, s, "t");
+let fid = 0;
+function blurFilter() {
+  const f = document.createElementNS(SVGNS, "filter"), id = "mb" + fid++;
+  f.setAttribute("id", id); f.setAttribute("x", "-50%"); f.setAttribute("y", "-50%"); f.setAttribute("width", "200%"); f.setAttribute("height", "200%");
+  const g = document.createElementNS(SVGNS, "feGaussianBlur"); g.setAttribute("stdDeviation", "0 0"); f.appendChild(g); defs.appendChild(f);
+  return { id, g };
+}
+// 模糊跟著速度與方向
+function setBlur(e, f, vx, vy, extra = 0) {
+  const bx = Math.min(30, Math.abs(vx) / 240 * 0.9 + extra), by = Math.min(30, Math.abs(vy) / 240 * 0.9 + extra);
+  if (bx + by < 0.35) { e.style.filter = "none"; return; }
+  f.g.setAttribute("stdDeviation", bx.toFixed(2) + " " + by.toFixed(2)); e.style.filter = `url(#${f.id})`;
+}
+const actors = [];
+function actor(e, pose) { const a = { e, pose, f: blurFilter() }; actors.push(a); return a; }
+function drawActor(a, t) {
+  const p = a.pose(t);
+  if (!p) { a.e.style.display = "none"; return; }
+  a.e.style.display = "";
+  const { x = 0, y = 0, sx = 1, sy = 1 } = p;
+  a.e.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%) scale(${sx},${sy})`;
+  if (p.color) a.e.style.color = p.color;
+  if (p.text != null) a.e.textContent = p.text;
+  a.e.style.clipPath = p.clip || "none";
+  const q = a.pose(t - 1 / 240) || p;
+  const ds = Math.max(Math.abs(sx - (q.sx ?? 1)), Math.abs(sy - (q.sy ?? 1))) * 240;
+  setBlur(a.e, a.f, (x - (q.x ?? x)) * 240, (y - (q.y ?? y)) * 240, Math.min(20, ds * 0.08 * (p.size || 100) / 100));
+}
+const show = (e, on) => { e.style.display = on ? "" : "none"; };
+
+
+// ===== 元素 =====
+const DIM = "#3a3433";
+const hex2 = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mixHex = (a, b, k) => { const A = hex2(a), B = hex2(b); return "rgb(" + A.map((v, i) => Math.round(v + (B[i] - v) * clamp(k))).join(",") + ")"; };
+const rgbHex = (s) => "#" + s.match(/\d+/g).map((v) => (+v).toString(16).padStart(2, "0")).join("");
+const INK70 = mixHex(COL.bg, COL.ink, 0.7);
+const img = (src) => { const i = document.createElement("img"); i.src = "assets/" + src; return i; };
+const vel = (f, t) => (f(t) - f(t - 1 / 240)) * 240;
+
+const bg = el(stage, { width: W + "px", height: H + "px" });
+
+// 主角形狀：播放鍵 → 畫框 → 底線 → 輸入框 → 卡片 → 分鏡格 → 圓 → 全畫面 → 畫框 → 播放鍵
+const svg = document.createElementNS(SVGNS, "svg");
+svg.setAttribute("width", W); svg.setAttribute("height", H);
+Object.assign(svg.style, { position: "absolute", left: "0", top: "0" });
+stage.appendChild(svg);
+const svgEl = (tag, attrs = {}) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+const cardPaths = [1, 2, 3].map(() => svgEl("path"));
+const ringTrack = svgEl("circle", { fill: "none", stroke: COL.ink, "stroke-opacity": "0.12", "stroke-width": "14" });
+const ringProg = svgEl("circle", { fill: "none", stroke: COL.accent, "stroke-width": "14", "stroke-linecap": "round" });
+const hero = svgEl("path");
+
+// 分鏡板：6×5 格，中間 4×3 先出現，傾倒成 3D 時外圈長出來
+const world = el(stage, { width: W + "px", height: H + "px", transformOrigin: "50% 50%" });
+const worldF = blurFilter();
+const tileX = (c) => CX + (c - 2.5) * 288, tileY = (r) => CY + (r - 2) * 170;
+const tiles = [];
+for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) {
+  const d = el(world, { left: tileX(c) - 135 + "px", top: tileY(r) - 76 + "px", width: "270px", height: "152px" }, "", "tile");
+  d.appendChild(img(`scene-${(((r * 6 + c - 1) % 6) + 6) % 6 + 1}.png`));
+  const central = c >= 1 && c <= 4 && r >= 1 && r <= 3;
+  const type = r === 1 && central ? "lead" : central ? "mid" : "outer";
+  const start = type === "lead" ? 8.2 : type === "mid" ? 8.2 + ((r - 2) * 4 + (c - 1)) * 0.04 : 9.0 + (Math.abs(c - 2.5) + Math.abs(r - 2)) * 0.06;
+  tiles.push({ d, type, start });
+}
+const hilite = el(world, { width: "278px", height: "160px", border: `4px solid ${COL.accent}`, borderRadius: "14px", boxSizing: "border-box" });
+
+// 三包剪法
+const CUTS = [["fast-tour", "快節奏導覽"], ["signature", "招牌片"], ["walkthrough", "操作示範"]];
+const panels = CUTS.map(([id, name], i) => {
+  const p = el(stage, {}, "", "panel");
+  p.appendChild(img(`cut-${id}.png`));
+  el(p, {}, name, "name");
+  const start = 10.2 + i * 0.15, out = 12.0 + i * 0.06;
+  const py = (t) => lerp(H + 260, CY + 70, spring(t - start, 11)) - 16 * P(t, 10.9, 1.1) + (H + 200) * ei(P(t, out, 0.3));
+  return { start, py, a: actor(p, (t) => (t < start || t >= out + 0.3 ? null : { x: CX + (i - 1) * 380, y: py(t), size: 300 })) };
+});
+const underline = actor(el(stage, { width: "150px", height: "8px", borderRadius: "4px", background: COL.accent }), (t) => {
+  if (t < 10.75 || t >= 12.0) return null;
+  const pos = eo(P(t, 11.25, 0.2)) + eo(P(t, 11.75, 0.2));
+  return { x: CX + (pos - 1) * 380, y: CY + 70 - 16 * P(t, 10.9, 1.1) + 128, sx: eo(P(t, 10.75, 0.2)) || 0.001 };
+});
+
+// 重畫一幕：畫框裡的一幕由下往上換成新的版本
+const sframe = el(stage, { width: "640px", height: "360px" }, "", "shot");
+const sImgs = ["scene-3.png", "scene-5.png"].map((s) => { const i = img(s); Object.assign(i.style, { position: "absolute", left: "0", top: "0" }); sframe.appendChild(i); return i; });
+const WIPE = [12.9];
+actor(sframe, (t) => {
+  if (t < 12.0 || t >= 14.35) return null;
+  const s = 1 + 0.04 * P(t, 12.5, 1.5);
+  return { x: CX + 250, y: lerp(H + 260, CY, spring(t - 12.0, 11)) - 1000 * ei(P(t, 14, 0.32)), sx: s, sy: s, size: 300 };
+});
+
+// 重拍的牆：所有縮圖排成傾斜的牆，上下捲動
+const wall = el(stage, { width: W + "px", height: H + "px", transformOrigin: "50% 50%" });
+const wallF = blurFilter();
+const WALL = [...[1, 2, 3, 4, 5, 6].map((n) => `scene-${n}.png`), ...CUTS.map(([id]) => `cut-${id}.png`)];
+const cols = [0, 1, 2, 3, 4].map((c) => {
+  const col = el(wall, { left: CX + (c - 2) * 350 - 160 + "px", top: "0px", width: "320px" });
+  for (let j = 0; j < 10; j++) {
+    const s = el(col, { left: "0px", top: j * 198 - 560 + "px", width: "320px", height: "180px" }, "", "shot");
+    s.appendChild(img(WALL[(c * 3 + j * 5) % WALL.length]));
+  }
+  return col;
+});
+const bandY = (t) => lerp(H + 220, CY, spring(t - 16.45, 11)) + 900 * ei(P(t, 18, 0.25));
+actor(el(stage, { width: "660px", height: "240px", borderRadius: "28px", background: COL.bg }), (t) => (t < 16.45 || t >= 18.35 ? null : { x: CX, y: bandY(t), size: 300 }));
+
+// 字（DOM 順序＝關鍵句的閱讀順序）
+const T = {};
+T.name1 = text(stage, "make-demo-video", 50, COL.bg);
+T.q1 = text(stage, "素材怎麼變成影片？", 76, COL.ink);
+T.q2 = text(stage, "鏡頭誰來排？", 76, COL.ink);
+T.cmd = text(stage, "/make-demo-video", 42, COL.bg, 700);
+const caret = el(stage, { width: "4px", height: "48px", background: COL.accent });
+T.ans = text(stage, "，一句話出片。", 42, COL.accent);
+const STEPS = ["剪法", "腳本", "分鏡", "合成"];
+T.steps = STEPS.map((s) => text(stage, s, 50, COL.ink));
+T.arrows = [0, 1, 2].map(() => text(stage, "→", 34, INK70, 700));
+T.n3 = text(stage, "3", 120, COL.accent);
+T.cutT = text(stage, "種剪法", 56, COL.ink);
+T.s5a = text(stage, "哪一幕不滿意，", 60, COL.ink);
+T.s5b = text(stage, "只重畫那一幕", 60, COL.accent);
+T.edit = text(stage, "改一句字，", 44, INK70, 700);
+T.about = text(stage, "約", 60, COL.ink);
+T.n20 = text(stage, "20", 150, COL.ink);
+T.sec = text(stage, "秒重算", 60, COL.ink);
+T.mp4 = text(stage, "MP4＋GIF", 112, COL.accent);
+T.readme = text(stage, "放進 README", 44, COL.ink, 700);
+T.name2 = text(stage, "make-demo-video", 50, COL.bg);
+T.tag = text(stage, "把素材做成 demo 影片。", 48, COL.ink);
+
+// 版面與形狀要等字型載入、量過字寬才算
+const tri = (s) => resample([[CX - 36 * s, CY - 48 * s], [CX + 52 * s, CY], [CX - 36 * s, CY + 48 * s]]);
+const T0 = tri(1);
+const CARDX = [-390, -130, 130, 390].map((d) => CX + d);
+const card = (x) => roundRect(x, CY, 200, 200, 28);
+const tileShape = (c, r) => roundRect(tileX(c), tileY(r), 270, 152, 10);
+let heroKF = [], L = {};
+const reveal = (k) => `inset(0 0 ${((1 - k) * 100).toFixed(2)}% 0)`;
+
+function layout() {
+  const w = (e) => e.offsetWidth;
+  L.cmdW = w(T.cmd); L.ansW = w(T.ans);
+  L.ansLeft = CX - (L.cmdW + L.ansW) / 2;
+  L.n3W = w(T.n3); L.cutW = w(T.cutT);
+  L.cutLeft = CX - (L.n3W + 14 + L.cutW) / 2;
+  L.s5aW = w(T.s5a); L.s5bW = w(T.s5b);
+  L.secW = w(T.sec);
+  heroKF = [
+    { at: 0, dur: 0.5, ease: eo, to: tri(1.18) },
+    { at: 0.5, dur: 0.5, ease: eio, to: roundRect(CX, CY, 480, 270, 22) },
+    { at: 2.0, dur: 0.4, ease: eo, to: roundRect(CX, CY + 70, w(T.q1) + 40, 10, 5) },
+    { at: 3.0, dur: 0.3, ease: eo, to: roundRect(CX, CY + 70, w(T.q2) + 40, 10, 5) },
+    { at: 4.0, dur: 0.4, ease: eio, to: roundRect(CX, CY, L.cmdW + L.ansW + 120, 104, 52) },
+    { at: 6.0, dur: 0.4, ease: eio, to: card(CARDX[0]) },
+    { at: 8.0, dur: 0.3, ease: eo, to: tileShape(1, 1) },
+    { at: 15.9, dur: 0.01, ease: (x) => x, to: circle(CX, CY, 150) },
+    { at: 16.0, dur: 0.35, ease: eo, to: roundRect(CX, CY, W + 60, H + 60, 0.01) },
+    { at: 18.0, dur: 0.4, ease: eio, to: roundRect(CX, CY - 60, 480, 270, 22) },
+    { at: 19.5, dur: 0.4, ease: eio, to: T0 },
+  ];
+}
+
+// 卡片的重點色：每拍往右移一張
+function cardOn(i, t) {
+  if (t < 6) return 1;
+  const on = i === 0 ? 1 : eo(P(t, 6 + i * 0.5, 0.15));
+  const off = i < 3 ? eo(P(t, 6.5 + i * 0.5, 0.15)) : P(t, 8, 0.2);
+  return on * (1 - off);
+}
+function heroColor(t) {
+  if (t < 4) return COL.accent;
+  if (t < 6) return mixHex(COL.accent, COL.ink, eo(P(t, 4, 0.3)));
+  if (t < 8.45) return mixHex(COL.ink, rgbHex(mixHex(DIM, COL.accent, cardOn(0, t))), eo(P(t, 6, 0.3)));
+  return COL.accent;
+}
+
+function initActors() {
+  // 1 產品名在畫框裡升起
+  actor(T.name1, (t) => {
+    if (t < 1.0 || t >= 2.2) return null;
+    const k = eo(P(t, 1.0, 0.35)), s = 1 + 0.04 * P(t, 1.4, 0.6);
+    return { x: CX, y: lerp(CY + 36, CY, k) - 160 * ei(P(t, 2.0, 0.2)), sx: s, sy: s, clip: reveal(k), size: 50 };
+  });
+  // 2 問句從底線升起
+  const q = (e, at, out) => actor(e, (t) => {
+    if (t < at || t >= out + 0.2) return null;
+    const k = eo(P(t, at, 0.35)), s = 1 + 0.04 * P(t, at + 0.35, out - at - 0.35);
+    return { x: CX, y: lerp(CY + 70, CY - 10, k) - 160 * ei(P(t, out, 0.2)), sx: s, sy: s, clip: reveal(k), size: 76 };
+  });
+  q(T.q1, 2.08, 3.0); q(T.q2, 3.05, 4.0);
+  // 3 輸入框打字，接上答案
+  const g3 = (t) => 1 + 0.03 * P(t, 5.1, 0.9);
+  const ax = (x, t) => CX + (x - CX) * g3(t);
+  const out3 = (t) => -150 * ei(P(t, 6.0, 0.2));
+  actor(T.cmd, (t) => {
+    if (t < 4.35 || t >= 6.2) return null;
+    const k = P(t, 4.4, 0.55);
+    return { x: ax(L.ansLeft + L.cmdW / 2, t), y: CY + out3(t), sx: g3(t), sy: g3(t), clip: `inset(-10% ${((1 - k) * 100).toFixed(2)}% -10% 0)`, size: 42 };
+  });
+  actor(caret, (t) => (t < 4.35 || t >= 5.0 ? null : { x: L.ansLeft + L.cmdW * P(t, 4.4, 0.55) + 4, y: CY }));
+  actor(T.ans, (t) => {
+    if (t < 4.95 || t >= 6.2) return null;
+    const k = eo(P(t, 4.95, 0.25));
+    return { x: ax(L.ansLeft + L.cmdW + L.ansW / 2, t), y: CY + 30 * (1 - k) + out3(t), sx: g3(t), sy: g3(t), clip: reveal(k), size: 42 };
+  });
+  // 4 四步
+  T.steps.forEach((e, i) => actor(e, (t) => {
+    const at = 6.15 + i * 0.08;
+    if (t < at || t >= 8.15) return null;
+    const k = eo(P(t, at, 0.3));
+    return { x: CARDX[i], y: CY + 40 * (1 - k) + 60 * ei(P(t, 8.0, 0.15)), color: cardOn(i, t) > 0.5 ? COL.bg : COL.ink, clip: reveal(k), size: 50 };
+  }));
+  T.arrows.forEach((e, i) => actor(e, (t) => {
+    if (t < 6.3 + i * 0.08 || t >= 8.0) return null;
+    return { x: (CARDX[i] + CARDX[i + 1]) / 2, y: CY + 20 * (1 - eo(P(t, 6.3 + i * 0.08, 0.25))) };
+  }));
+  // 6 三包剪法的標題
+  const cutY = (t) => lerp(-120, 0, eo(P(t, 10.05, 0.35))) - 220 * ei(P(t, 12.0, 0.25));
+  actor(T.n3, (t) => (t < 10.05 || t >= 12.25 ? null : { x: L.cutLeft + L.n3W / 2, y: 96 + cutY(t), text: String(clamp(1 + Math.floor((t - 10.2) / 0.15), 1, 3)), size: 120 }));
+  actor(T.cutT, (t) => (t < 10.05 || t >= 12.25 ? null : { x: L.cutLeft + L.n3W + 14 + L.cutW / 2, y: 112 + cutY(t), size: 56 }));
+  // 7 重畫一幕
+  const left5 = 100;
+  const in7 = (t, at) => 40 * (1 - eo(P(t, at, 0.3))) - 400 * ei(P(t, 14.0, 0.25));
+  actor(T.s5a, (t) => (t < 12.25 || t >= 14.25 ? null : { x: left5 + L.s5aW / 2, y: CY - 44 + in7(t, 12.25), clip: reveal(eo(P(t, 12.25, 0.3))), size: 60 }));
+  actor(T.s5b, (t) => (t < 12.35 || t >= 14.25 ? null : { x: left5 + L.s5bW / 2, y: CY + 70 + in7(t, 12.35), clip: reveal(eo(P(t, 12.35, 0.3))), size: 60 }));
+  // 8 二十秒重算
+  const g8 = (t) => 1 + 0.04 * P(t, 15, 1);
+  const p8 = (x, y, t, at) => {
+    if (t < at || t >= 16.15) return null;
+    const g = g8(t), k = eo(P(t, at, 0.3));
+    return { x: CX + (x - CX) * g, y: CY + (y - CY) * g + 30 * (1 - k) - 260 * ei(P(t, 16.0, 0.15)), sx: g, sy: g, clip: reveal(k), size: 60 };
+  };
+  actor(T.edit, (t) => p8(CX, CY - 232, t, 14.05));
+  actor(T.about, (t) => p8(CX - 218, CY, t, 14.15));
+  actor(T.n20, (t) => { const p = p8(CX, CY + 4, t, 14.1); if (p) { p.text = String(Math.round(20 * eo(P(t, 14.2, 0.75)))); p.clip = "none"; } return p; });
+  actor(T.sec, (t) => p8(CX + 178 + L.secW / 2, CY, t, 14.25));
+  // 9 重拍
+  actor(T.mp4, (t) => (t < 16.5 || t >= 18.35 ? null : { x: CX, y: bandY(t) - 30, size: 112 }));
+  actor(T.readme, (t) => (t < 16.9 || t >= 18.35 ? null : { x: CX, y: bandY(t) + 66 + 20 * (1 - eo(P(t, 16.9, 0.3))), clip: reveal(eo(P(t, 16.9, 0.3))), size: 44 }));
+  // 10 收尾
+  actor(T.name2, (t) => {
+    if (t < 18.35 || t >= 19.55) return null;
+    const k = eo(P(t, 18.35, 0.3)), s = 1 + 0.03 * P(t, 18.6, 0.8);
+    return { x: CX, y: CY - 60 + 30 * (1 - k) - 20 * P(t, 19.4, 0.15), sx: s, sy: s, clip: P(t, 19.4, 0.01) > 0 ? `inset(${(eo(P(t, 19.4, 0.15)) * 100).toFixed(2)}% 0 0 0)` : reveal(k), size: 50 };
+  });
+  actor(T.tag, (t) => {
+    if (t < 18.35 || t >= 19.6) return null;
+    const k = eo(P(t, 18.35, 0.3)), s = 1 + 0.03 * P(t, 18.65, 0.75);
+    return { x: CX, y: CY + 150 + 30 * (1 - k) + 80 * ei(P(t, 19.4, 0.2)), sx: s, sy: s, clip: reveal(k), size: 48 };
+  });
+}
+
+// ===== seek =====
+function seek(t) {
+  t = clamp(t, 0, DURATION);
+  window.__t = t;
+  bg.style.background = COL.bg;
+
+  // 主角形狀
+  const heroOn = t < 8.45 || t >= 16.0;
+  hero.style.display = heroOn ? "" : "none";
+  if (heroOn) { hero.setAttribute("d", toPath(chain(T0, heroKF, t))); hero.setAttribute("fill", heroColor(t)); }
+
+  // 另外三張卡
+  cardPaths.forEach((p, j) => {
+    const i = j + 1;
+    if (t < 6.12 || t >= 8.45) { p.style.display = "none"; return; }
+    p.style.display = "";
+    const c = card(lerp(CARDX[0], CARDX[i], spring(t - 6.12, 12)));
+    p.setAttribute("d", toPath(t < 8 ? c : mix(card(CARDX[i]), tileShape(i + 1, 1), eo(P(t, 8, 0.3)))));
+    p.setAttribute("fill", mixHex(DIM, COL.accent, cardOn(i, t)));
+  });
+
+  // 分鏡板
+  const worldOn = t >= 8.2 && t < 10.4;
+  world.style.display = worldOn ? "" : "none";
+  if (worldOn) {
+    const k3 = eio(P(t, 9, 0.8)), push = 1 + 0.025 * P(t, 8.45, 0.55);
+    const up = (x) => -1500 * ei(P(x, 10, 0.38));
+    world.style.transform = `translateY(${up(t).toFixed(1)}px) perspective(1400px) rotateX(${(52 * k3).toFixed(2)}deg) rotateZ(${(-26 * k3).toFixed(2)}deg) scale(${(push * (1 + 0.3 * k3)).toFixed(4)}) translateY(${(-50 * P(t, 9, 1)).toFixed(1)}px)`;
+    setBlur(world, worldF, 0, vel(up, t));
+    for (const tl of tiles) {
+      if (t < tl.start) { tl.d.style.display = "none"; continue; }
+      tl.d.style.display = "";
+      if (tl.type === "lead") { tl.d.style.clipPath = reveal(eo(P(t, tl.start, 0.25))); tl.d.style.transform = "none"; }
+      else { const s = spring(t - tl.start, 12); tl.d.style.transform = `scale(${s.toFixed(4)})`; }
+    }
+    const hk = eo(P(t, 8.5, 0.35));
+    hilite.style.display = t >= 8.45 ? "" : "none";
+    hilite.style.left = lerp(tileX(1), tileX(3), hk) - 139 + "px";
+    hilite.style.top = lerp(tileY(1), tileY(2), hk) - 80 + "px";
+  }
+
+  // 重畫一幕：由下往上刷
+  sImgs.forEach((im, k) => { im.style.clipPath = k === 0 ? "none" : `inset(${((1 - eo(P(t, WIPE[k - 1], 0.22))) * 100).toFixed(2)}% 0 0 0)`; });
+
+  // 圓環
+  const ringOn = t >= 14.0 && t < 16.0;
+  ringTrack.style.display = ringProg.style.display = ringOn ? "" : "none";
+  if (ringOn) {
+    const r = 150 * spring(t - 14.0, 12) * (1 + 0.04 * P(t, 15, 1)), C = 2 * Math.PI * r;
+    for (const c of [ringTrack, ringProg]) { c.setAttribute("cx", CX); c.setAttribute("cy", CY); c.setAttribute("r", Math.max(0.1, r).toFixed(2)); }
+    ringProg.setAttribute("transform", `rotate(-90 ${CX} ${CY})`);
+    ringProg.setAttribute("stroke-dasharray", C.toFixed(2));
+    ringProg.setAttribute("stroke-dashoffset", (C * (1 - eo(P(t, 14.2, 0.75)))).toFixed(2));
+  }
+
+  // 牆
+  const wallOn = t >= 16.1 && t < 18.35;
+  wall.style.display = wallOn ? "" : "none";
+  if (wallOn) {
+    const y = (x) => lerp(900, 0, spring(x - 16.1, 10)) + 1200 * ei(P(x, 18, 0.25));
+    wall.style.transform = `translateY(${y(t).toFixed(1)}px) perspective(1300px) rotateX(28deg) rotateZ(-14deg) scale(1.3)`;
+    setBlur(wall, wallF, 0, vel(y, t));
+    cols.forEach((col, c) => { col.style.transform = `translateY(${((c % 2 ? 1 : -1) * 140 * (t - 16) + c * 40).toFixed(1)}px)`; });
+  }
+
+  for (const a of actors) drawActor(a, t);
+}
+window.seek = seek;
+
+// ===== 配樂（可改音色與編曲，落點規則看 cut.md） =====
+async function renderAudio() {
+  const sr = 44100, ctx = new OfflineAudioContext(2, sr * DURATION, sr);
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 4;
+  const master = ctx.createGain(); master.gain.value = 0.85; comp.connect(master); master.connect(ctx.destination);
+  const rand = rng(42), noise = ctx.createBuffer(1, sr * 3, sr), nd = noise.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = rand() * 2 - 1;
+  const env = (g, t, peak, decay) => { g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(peak, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + decay); };
+  const kick = (t, amp = 0.95) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(165, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.14); env(g, t, amp, 0.45); o.connect(g).connect(comp); o.start(t); o.stop(t + 0.5); };
+  const noiseHit = (t, type, freq, q, amp, decay) => { const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = noise; f.type = type; f.frequency.value = freq; f.Q.value = q; env(g, t, amp, decay); s.connect(f).connect(g).connect(comp); s.start(t, (t * 0.37) % 2); s.stop(t + decay + 0.05); };
+  const hat = (t) => noiseHit(t, "highpass", 8000, 0.7, 0.12, 0.06);
+  const hit = (t, amp = 0.6) => { noiseHit(t, "bandpass", 1600, 0.6, amp, 0.35); const o = ctx.createOscillator(), g = ctx.createGain(); o.type = "triangle"; o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(55, t + 0.3); env(g, t, amp * 0.6, 0.6); o.connect(g).connect(comp); o.start(t); o.stop(t + 0.7); };
+  const riser = (t0, t1) => { const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = noise; s.loop = true; f.type = "bandpass"; f.Q.value = 1.2; f.frequency.setValueAtTime(300, t0); f.frequency.exponentialRampToValueAtTime(6000, t1); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.5, t1); g.gain.linearRampToValueAtTime(0, t1 + 0.02); s.connect(f).connect(g).connect(comp); s.start(t0); s.stop(t1 + 0.05); };
+  const bar = BEAT * 4, bars = DURATION / bar;
+  for (let b = 0; b < DURATION / BEAT; b++) { kick(b * BEAT); if (b * BEAT >= bar) hat(b * BEAT + BEAT / 2); }
+  for (let k = 1; k < bars; k++) hit(k * bar);                          // 每小節（換場）一記重拍
+  riser(14, 16); hit(16, 0.95);                                         // 上升音 14→16 秒，在第 9 小節（全片最強的一刻）落下
+  const buf = await ctx.startRendering(), L = buf.getChannelData(0), R = buf.getChannelData(1);
+  const pcm = new Int16Array(L.length * 2);
+  for (let i = 0; i < L.length; i++) { pcm[i * 2] = clamp(L[i], -1, 1) * 32767; pcm[i * 2 + 1] = clamp(R[i], -1, 1) * 32767; }
+  let bin = ""; const bytes = new Uint8Array(pcm.buffer);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return { sampleRate: sr, data: btoa(bin) };
+}
+window.renderAudio = renderAudio;
+
+// 字型載入後才算圖；load() 的字串放片子裡會出現的字
+
+// 字型載入、量過字寬才排版
+window.ready = false;
+document.fonts.load('900 100px "Noto Sans TC"', "make-demo-video素材怎麼變成影片？鏡頭誰來排／，一句話出片。剪法腳本分鏡合成→快節奏導覽操作示範招牌片哪一幕不滿意只重畫那改字約秒重算MP4＋GIF放進README把做demo0123456789").catch(() => {}).then(() => document.fonts.ready).then(() => { layout(); initActors(); seek(0); window.ready = true; });
+</script>
+</body>
+</html>

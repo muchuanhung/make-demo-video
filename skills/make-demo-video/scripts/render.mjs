@@ -1,23 +1,30 @@
 #!/usr/bin/env node
 // 分鏡表 ＋ 風格 → MP4、GIF、結果頁。
-// 用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 30] [--gif-width 640（直式 360）] [--gif-fps 12] [--no-gif] [--no-open]
-import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
+// 用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 30] [--music] [--motion-blur 6] [--gif-width 640（直式 360）] [--gif-fps 12] [--no-gif] [--no-open]
+import { readFile, writeFile, mkdir, stat, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import QRCode from "qrcode";
 import { SKILL_DIR, parseArgs, loadStyle, loadStoryboard, launchBrowser, buildPlayer, formatWarnings } from "./lib.mjs";
-import { resultPage } from "./result-page.mjs";
+import { resultPage, loadCredit } from "./result-page.mjs";
+import { soundtrack, toWav, musicPlan, SAMPLE_RATE } from "./soundtrack.mjs";
 
-const args = parseArgs(process.argv.slice(2), ["no-gif", "no-open"]);
+const args = parseArgs(process.argv.slice(2), ["no-gif", "no-open", "music"]);
 if (!args.storyboard || !args.style) {
-  console.error("用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 30] [--gif-width 640（直式 360）] [--gif-fps 12] [--no-gif] [--no-open]");
+  console.error("用法：node render.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>] [--fps 30] [--music] [--motion-blur 6] [--gif-width 640（直式 360）] [--gif-fps 12] [--no-gif] [--no-open]");
   process.exit(2);
 }
 
 const started = Date.now();
 const fps = Number(args.fps || 30);
+// 動態模糊：每格多拍幾張（子格）再平均；1 就是不加
+const sub = Number(args["motion-blur"] || 1);
+if (!(Number.isInteger(sub) && sub >= 1 && sub <= 8)) {
+  console.error("--motion-blur 要是 1–8 的整數（每格拍幾張再平均，建議 6）");
+  process.exit(2);
+}
 const outDir = path.resolve(args.out || path.dirname(args.storyboard));
 const name = args.name || "demo";
 
@@ -29,19 +36,6 @@ function run(cmd, cmdArgs) {
     child.on("error", reject);
     child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${path.basename(cmd)} 失敗：\n${err.slice(-800)}`))));
   });
-}
-
-
-// 結果頁角落的「用 make-demo-video 做的」：網址取自 plugin.json 的 repository，影片本身就指向這個 repo 時不重複放。
-async function loadCredit(boardUrl) {
-  try {
-    const plugin = JSON.parse(await readFile(path.join(SKILL_DIR, "..", "..", ".claude-plugin", "plugin.json"), "utf8"));
-    const url = plugin.repository;
-    if (!url || boardUrl?.replace(/\/$/, "") === url.replace(/\/$/, "")) return null;
-    return { url, qrSvg: await QRCode.toString(url, { type: "svg", margin: 0 }) };
-  } catch {
-    return null; // 不是以 plugin 形式安裝（沒有 plugin.json）時就不放
-  }
 }
 
 async function main() {
@@ -60,24 +54,44 @@ async function main() {
     await page.goto("file://" + playerFile);
     await page.evaluate(() => window.ready);
 
+    // 配樂照節拍與每一句的起點合成，先寫成暫存的 WAV 再跟畫面一起交給 ffmpeg
+    const wav = args.music ? path.join(outDir, `${name}.music.wav`) : null;
+    if (wav) {
+      const samples = soundtrack(musicPlan(board));
+      await writeFile(wav, toWav(samples, SAMPLE_RATE));
+    }
     const ffmpeg = spawn(ffmpegPath, [
       "-y", "-loglevel", "error",
-      "-f", "image2pipe", "-framerate", String(fps), "-c:v", "mjpeg", "-i", "-",
-      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-movflags", "+faststart", mp4,
+      "-f", "image2pipe", "-framerate", String(fps * sub), "-c:v", "mjpeg", "-i", "-",
+      ...(wav ? ["-i", wav] : []),
+      // 每 sub 張子格平均成一格（tmix），再只留每組的最後一張
+      ...(sub > 1 ? ["-vf", `tmix=frames=${sub},select='eq(mod(n\\,${sub})\\,${sub - 1})',setpts=N/(${fps}*TB)`, "-r", String(fps)] : []),
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20",
+      ...(wav ? ["-c:a", "aac", "-b:a", "192k", "-shortest"] : []),
+      "-movflags", "+faststart", mp4,
     ], { stdio: ["pipe", "ignore", "pipe"] });
     let ffmpegErr = "";
     ffmpeg.stderr.on("data", (d) => (ffmpegErr += d));
     const closed = once(ffmpeg, "close");
 
     const frames = Math.round(board.duration * fps);
+    // 每一幕的起點：子格不能跨過換幕，否則硬切會被平均成兩幕疊在一起
+    const cuts = [];
+    board.scenes.reduce((t, s) => (cuts.push(t), t + s.seconds), 0);
+    const sceneStart = (t) => cuts.findLast((c) => c <= t + 1e-6) ?? 0;
     for (let i = 0; i < frames; i++) {
-      await page.evaluate((t) => window.seek(t), i / fps);
-      const shot = await page.screenshot({ type: "jpeg", quality: 92 });
-      if (!ffmpeg.stdin.write(shot)) await once(ffmpeg.stdin, "drain");
+      // 子格往前取半格（像 180 度快門），模糊拖在動作後面
+      const t0 = i / fps, from = sceneStart(t0);
+      for (let j = 0; j < sub; j++) {
+        await page.evaluate((t) => window.seek(t), Math.max(from, t0 - (0.5 * (sub - 1 - j)) / sub / fps));
+        const shot = await page.screenshot({ type: "jpeg", quality: 92 });
+        if (!ffmpeg.stdin.write(shot)) await once(ffmpeg.stdin, "drain");
+      }
       if (i % fps === 0) process.stdout.write(`\r算圖中 ${Math.round((i / frames) * 100)}%`);
     }
     ffmpeg.stdin.end();
     const [code] = await closed;
+    if (wav) await rm(wav, { force: true });
     if (code !== 0) throw new Error("ffmpeg 失敗：\n" + ffmpegErr.slice(-800));
     process.stdout.write("\r算圖中 100%\n");
   } finally {

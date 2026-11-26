@@ -1,26 +1,33 @@
-// make-demo-video 的四步進度面板：跟著 ① 腳本 → ② 風格 → ③ 分鏡板 → ④ 合成影片 前進。
-// - ① 腳本在分鏡板出現前可以直接改；之後收成一行，改動都在分鏡卡上做。
-// - ② 由 Claude 呼叫 show_options 展開：風格縮圖、比例、秒數、幕數，按「確定」把選擇當成下一則訊息送出。
-//   選完可以按「重新選」：只換風格時面板自己重算縮圖；改了比例、秒數或幕數才請 Claude 重排。
+// make-demo-video 的四步進度面板：跟著 ① 剪法與設定 → ② 腳本 → ③ 分鏡板 → ④ 合成影片 前進。
+// - ① 由 Claude 讀完素材後呼叫 show_options 展開：剪法大卡（縮圖、適合什麼、Claude 的推薦理由）、
+//   比例、秒數、幕數，按「確定」把選擇當成下一則訊息送出。外觀一律從素材取色（Claude 寫 style.json），面板不提供內建色票。
+//   剪法決定腳本怎麼寫，所以先選剪法再寫腳本。選完可以按「重新選」：
+//   改了比例、秒數或幕數請 Claude 重排分鏡；換了剪法請 Claude 照新剪法重寫腳本與分鏡。
+// - ② 腳本在分鏡板出現前可以直接改；之後收成一行，改動都在分鏡卡上做。
 // - ③ 分鏡板：每張卡是「一句腳本＋這一幕的縮圖」。↑ ↓ ✕ 直接改 storyboard.json 與 script.md；
 //   ＋ 插一句、⟳ 重畫這一幕交給 Claude 只改那一幕。分鏡表一變，面板自己跑 frames.mjs 重算縮圖（約 1 秒）。
 // - ④ 使用者確認分鏡板後按「合成影片」才算整支影片。
+// - 生成式剪法（招牌片，meta.json 的 mode 是 generate）沒有 storyboard.json：③ 先由 Claude 呼叫 show_concepts 讓使用者挑概念，
+//   Claude 寫好 reel.html、跑 signature.mjs beats 之後，面板讀 beats/beats.json 畫逐拍分鏡板（一小節一排，每拍可以留意見）。
+// - VS Code 等沒有 Image 的畫面，縮圖要包成 base64 SVG；面板輸出上限 256KB，所以用小 JPEG，並且限制縮圖總量。
 // 進度從 Claude 的工具呼叫認出來（寫了 script.md、storyboard.json，跑了 check.mjs、render.mjs），不靠 Claude 回報。
 // 沿用上一次留下的分鏡表時 Claude 不會寫檔，所以跑 check.mjs 檢查它也算進到 ③。
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Aspect, Choice, LintNote, Run, SceneRow } from '../types'
+import type { Aspect, BeatRow, Choice, LintNote, Run, SceneRow } from '../types'
 
 const PLUGIN = 'make-demo-video'
 const PANE = 'make-demo-video'
 const TOOL_NAME = 'show_options'
-const TOOL = `mcp__${PLUGIN}__${TOOL_NAME}`
-const SECONDS = [12, 15, 30, 45, 60]
+const CONCEPT_TOOL = 'show_concepts'
+/** VS Code 面板輸出上限 256KB；縮圖 SVG（base64）全部加起來不超過這個量，超過的改顯示文字。 */
+const SVG_BUDGET = 180_000
+const SECONDS = [12, 15, 20, 30, 45, 60]
 const MIN_SCENES = 3
 const MAX_SCENES = 12 // 跟 SKILL.md 的幕數範圍（3–12）一致
-const STYLE_ORDER = ['screenplay', 'studio', 'terminal', 'neon', 'blueprint']
 const CUSTOM = 'custom'
+const DEFAULT_CUT = 'fast-tour'
 
 const FRESH: Run = {
   isActive: false,
@@ -29,7 +36,8 @@ const FRESH: Run = {
   script: [],
   isPicking: false,
   suggested: [],
-  choice: { style: 'studio', aspect: '16:9', seconds: 30, scenes: 6 },
+  reason: null,
+  choice: { cut: DEFAULT_CUT, style: CUSTOM, aspect: '16:9', seconds: 15, scenes: 6 },
   isChosen: false,
   scenes: [],
   isEdited: false,
@@ -42,13 +50,24 @@ const FRESH: Run = {
   lint: [],
   openInput: null,
   pickedFrom: null,
+  concepts: [],
+  isConceptPicking: false,
+  concept: null,
+  beats: [],
+  beatsAt: null,
+  beatProblems: [],
+  framesNote: null,
 }
 
 // 欄位改了就換 shape，舊版存下的值會被丟掉，不會讀到形狀不對的資料。
-const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-6' })
+const run = atom({ plugin: 'make-demo-video', key: 'run' } as const, FRESH, { shape: 'run-9' })
 
 /** thumb：PNG 縮圖路徑（終端機用 Image 畫）；svg：VS Code、桌面版等畫面用的縮圖（它們沒有 Image，但有 Svg）。 */
-type StyleInfo = { id: string; name: string; swatch: string[]; thumb: string | null; svg: string | null }
+type Thumb = { thumb: string | null; svg: string | null }
+/** 內建風格只用來顯示名稱：使用者在對話裡要求換成某個內建風格時，Claude 用它算圖，面板跟著顯示。 */
+type StyleInfo = { id: string; name: string }
+/** 剪法包 cuts/<id>/meta.json 裡面板要用的欄位；defaults 是剪法建議的比例與秒數。 */
+type CutInfo = Thumb & { id: string; name: string; suits: string; mode: string; defaults: { aspect?: Aspect; seconds?: number } }
 
 /**
  * 風格縮圖的 SVG：只是把 PNG 縮圖包起來，PNG（scripts/thumbs.mjs 產生）是唯一的來源，
@@ -63,16 +82,46 @@ function thumbSvg(pngBase64: string | null): string | null {
   )
 }
 let styles: StyleInfo[] = []
+let cuts: CutInfo[] = []
 /** session 的工作目錄（終端機的 Image 要絕對路徑）；session.start 時記下。 */
 let cwd = ''
-/** 分鏡縮圖包成的 SVG，以「檔案路徑＃framesAt」為鍵，縮圖重算後自然換成新的。 */
-const frameSvgs = new Map<string, string>()
+/** 分鏡、逐拍縮圖包成的 SVG，以「檔案路徑＃產生時間」為鍵，縮圖重算後自然換成新的。 */
+const imageSvgs = new Map<string, string>()
 
 type $Like = EngineInterface
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(n)))
 const nearestSeconds = (n: number) => SECONDS.reduce((best, s) => (Math.abs(s - n) < Math.abs(best - n) ? s : best))
 const join = (dir: string, name: string) => (dir === '' || dir === '.' ? name : `${dir.replace(/\/+$/, '')}/${name}`)
+/** 去掉路徑裡的 .、..、重複的 /。 */
+function normalize(path: string): string {
+  const parts: string[] = []
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue
+    if (part === '..') parts.pop()
+    else parts.push(part)
+  }
+  return (path.startsWith('/') ? '/' : '') + parts.join('/')
+}
+/**
+ * 轉成絕對路徑。base 是 Claude 下指令當時的工作目錄：shell 的 cd 會留到下一個指令（session 的工作目錄跟著變），
+ * 輸出資料夾若存成相對路徑，之後讀檔、跑 frames.mjs 會被解析到別的資料夾。
+ */
+const resolveIn = (base: string, path: string) => normalize(path.startsWith('/') || !base ? path : join(base, path))
+
+/**
+ * 面板工具（show_options、show_concepts）收到的 out：Claude 寫的相對路徑是相對於專案根目錄，不是 shell 現在的目錄。
+ * Claude 中途 cd 進剪法資料夾讀 cut.md（cd 會留著）之後再呼叫工具，照 shell 目錄解析會變成剪法資料夾底下，
+ * 之後的分鏡板、結果頁都讀不到。先試專案根目錄、再試 shell 目錄，取存在的那個；都不存在就用專案根目錄。
+ */
+async function outDir($: $Like, path: string): Promise<string> {
+  if (path.startsWith('/')) return normalize(path)
+  const root = await $.session.root().catch(() => cwd)
+  const here = await $.session.cwd().catch(() => root)
+  const tries = [...new Set([resolveIn(root, path), resolveIn(here, path)])]
+  for (const dir of tries) if (await $.fs.exists(dir).catch(() => false)) return dir
+  return tries[0] as string
+}
 const plain = (text: unknown) => String(text ?? '').replace(/\*\*/g, '')
 
 /** script.md 一句一行，去掉編號、條列符號與標題。 */
@@ -94,6 +143,16 @@ const SHOTS: Record<string, { label: string; beats: number }> = {
   content: { label: '內容頁', beats: 4 },
   cta: { label: '號召行動', beats: 3 },
   outro: { label: '結尾', beats: 5 },
+  stat: { label: '數字', beats: 4 },
+  // 操作示範（walkthrough.mjs）
+  reveal: { label: '結果先上', beats: 2 },
+  home: { label: '現場', beats: 6 },
+  seek: { label: '找', beats: 4 },
+  burst: { label: '重拍', beats: 3 },
+  click: { label: '點', beats: 5 },
+  expand: { label: '展開', beats: 5 },
+  focus: { label: '細節', beats: 6 },
+  dock: { label: '收尾', beats: 12 },
 }
 
 function toRows(board: { scenes?: unknown; beat?: unknown }): SceneRow[] {
@@ -104,13 +163,32 @@ function toRows(board: { scenes?: unknown; beat?: unknown }): SceneRow[] {
     const items = Array.isArray(s.items) ? s.items.map(plain).join('、') : ''
     const shot = typeof s.shot === 'string' ? s.shot : null
     // 用模板時秒數多半沒寫，照拍數換算
-    const seconds = Number(s.seconds) || (shot ? (Number(s.beats) || SHOTS[shot]?.beats || 0) * beat : 0)
+    const beats = shot && !Number(s.seconds) ? Number(s.beats) || SHOTS[shot]?.beats || 0 : null
+    const seconds = Number(s.seconds) || (beats ?? 0) * beat
+    const text = plain(s.caption || s.heading || items || s.name || '')
+    // 操作示範的鏡頭多半沒有字：卡上顯示它對準的網頁上的字（「切換城市」）；那是截圖上的字，不能在這裡改
+    const targets = [s.to, s.mark, s.press].filter((t): t is string => typeof t === 'string').map(t => `「${t}」`).join(' ')
+    const shots = Array.isArray(s.images) ? `${s.images.length} 張截圖` : ''
     return {
       kind: shot ? SHOTS[shot]?.label ?? shot : String(s.kind ?? '?'),
       seconds: Math.round(seconds * 10) / 10,
-      label: plain(s.caption || s.heading || items || s.name || ''),
+      label: text || targets || shots,
+      beats,
+      ...(text ? {} : { fixedText: true }),
     }
   })
+}
+
+/** 讀一張 PNG 縮圖。PNG 只在載入時讀一次；之後每次重畫都用同一段 SVG 文字。 */
+async function loadThumb($: $Like, path: string): Promise<Thumb> {
+  const thumb = (await $.fs.exists(path)) ? path : null
+  const png = thumb
+    ? await ($.fs.read(thumb, { as: 'bytes' }) as Promise<unknown>).then(
+        v => (v as { base64?: string }).base64 ?? null,
+        () => null,
+      )
+    : null
+  return { thumb, svg: thumbSvg(png) }
 }
 
 async function loadStyles($: $Like) {
@@ -119,34 +197,46 @@ async function loadStyles($: $Like) {
   for (const entry of await $.fs.list(dir).catch(() => [])) {
     if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
     try {
-      const style = JSON.parse(await readText($, `${dir}/${entry.name}`)) as {
-        id: string
-        name?: string
-        colors: Record<string, string>
-      }
-      const c = style.colors
-      const thumbPath = `${dir}/thumbs/${style.id}.png`
-      const thumb = (await $.fs.exists(thumbPath)) ? thumbPath : null
-      // PNG 只在載入時讀一次；之後每次重畫都用同一段 SVG 文字
-      const png = thumb
-        ? await ($.fs.read(thumb, { as: 'bytes' }) as Promise<unknown>).then(
-            v => (v as { base64?: string }).base64 ?? null,
-            () => null,
-          )
-        : null
-      found.push({
-        id: style.id,
-        name: style.name ?? style.id,
-        swatch: [c.backdrop ?? c.bg, c.surface, c.text, c.accent].filter((x): x is string => Boolean(x)),
-        thumb,
-        svg: thumbSvg(png),
-      })
+      const style = JSON.parse(await readText($, `${dir}/${entry.name}`)) as { id: string; name?: string }
+      found.push({ id: style.id, name: style.name ?? style.id })
     } catch {
       // 壞掉的風格檔不擋面板，算圖時 render.mjs 會指出錯在哪
     }
   }
-  const rank = (id: string) => (STYLE_ORDER.includes(id) ? STYLE_ORDER.indexOf(id) : 99)
-  styles = found.sort((a, b) => rank(a.id) - rank(b.id))
+  styles = found
+}
+
+/** 讀 cuts/<id>/meta.json 與 thumb.png；預設剪法排第一，其餘照 id 排。 */
+async function loadCuts($: $Like) {
+  const dir = `${$.plugin.root}/skills/make-demo-video/cuts`
+  const found: CutInfo[] = []
+  for (const entry of await $.fs.list(dir).catch(() => [])) {
+    if (entry.kind !== 'dir') continue
+    try {
+      const meta = JSON.parse(await readText($, `${dir}/${entry.name}/meta.json`)) as {
+        id?: string
+        name?: string
+        suits?: string
+        mode?: string
+        defaults?: { aspect?: string; seconds?: number }
+      }
+      const d = meta.defaults ?? {}
+      found.push({
+        id: meta.id ?? entry.name,
+        name: meta.name ?? entry.name,
+        suits: meta.suits ?? '',
+        mode: meta.mode ?? 'shots',
+        defaults: {
+          aspect: d.aspect === '9:16' || d.aspect === '16:9' ? d.aspect : undefined,
+          seconds: typeof d.seconds === 'number' ? d.seconds : undefined,
+        },
+        ...(await loadThumb($, `${dir}/${entry.name}/thumb.png`)),
+      })
+    } catch {
+      // 壞掉的剪法包不擋面板；cuts.test.mjs 會擋下格式錯誤
+    }
+  }
+  cuts = found.sort((a, b) => (a.id === DEFAULT_CUT ? -1 : b.id === DEFAULT_CUT ? 1 : a.id.localeCompare(b.id)))
 }
 
 /** $.fs.read 的結果一律轉成文字（預設就是文字；保險起見也處理 bytes）。 */
@@ -213,8 +303,14 @@ function writesIn(e: unknown): { path: string; content: string }[] {
 }
 
 /** Bash 指令跑 check.mjs 時檢查的分鏡表路徑（先 cd 到別的資料夾時接上那個資料夾）；沒跑 check.mjs 回傳 null。 */
-function checkedBoard(command: string): string | null {
-  const m = command.match(/check\.mjs[^\n;&|]*?--storyboard\s+["']?([^\s"';&|]+)/)
+const checkedBoard = (command: string) => pathArg(command, /check\.mjs[^\n;&|]*?--storyboard\s+["']?([^\s"';&|]+)/)
+/** Bash 指令跑 signature.mjs beats／render 時的 reel.html 路徑。 */
+const reelOf = (command: string, sub: 'beats' | 'render') =>
+  pathArg(command, new RegExp(`signature\\.mjs["']?\\s+${sub}\\s+["']?([^\\s"';&|]+)`))
+
+/** 指令裡 re 第一組抓到的路徑；先 cd 到別的資料夾時接上那個資料夾。 */
+function pathArg(command: string, re: RegExp): string | null {
+  const m = command.match(re)
   if (!m || m.index === undefined) return null
   const raw = m[1] ?? ''
   const cd = [...command.slice(0, m.index).matchAll(/(?:^|[;&|\n]\s*)cd\s+["']?([^\s"';&|]+)["']?/g)].at(-1)?.[1]
@@ -243,7 +339,45 @@ function styleFromArg(arg: string): string {
 }
 
 /** 跑 frames.mjs 重算分鏡縮圖。失敗不擋流程，原因記在 note。 */
-async function regenFrames($: $Like) {
+/** 縮圖一次只跑一個：跑的時候又被要求，就等它跑完再補跑一次（連按幾次都合併成一次）。 */
+let framing: Promise<void> | null = null
+let framingAgain = false
+function regenFrames($: $Like): Promise<void> {
+  if (framing) {
+    framingAgain = true
+    return framing
+  }
+  framing = (async () => {
+    try {
+      do {
+        framingAgain = false
+        await regenFramesOnce($)
+      } while (framingAgain)
+    } finally {
+      framing = null
+    }
+  })()
+  return framing
+}
+
+/** 面板上的編輯（讀分鏡表、改、寫回）一次只做一個：連按時不會兩個一起讀到舊內容、互相蓋掉。 */
+let editing: Promise<unknown> = Promise.resolve()
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const done = editing.then(fn, fn)
+  editing = done.catch(() => undefined)
+  return done
+}
+
+/** Node 程式當掉時 stderr 最後一行是「Node.js v24…」：挑出真正的錯誤那一行。 */
+function errorLine(stderr: string): string | null {
+  const lines = stderr
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line && !/^at\s/.test(line) && !/^Node\.js v/.test(line) && !/^\^+$/.test(line))
+  return lines.find(line => /^\w*Error\b|錯誤|失敗|找不到/.test(line)) ?? lines.at(-1) ?? null
+}
+
+async function regenFramesOnce($: $Like) {
   const r = await read($, run)
   if (!r.out || r.scenes.length === 0) return
   const style = styleArg(r)
@@ -265,7 +399,7 @@ async function regenFrames($: $Like) {
       { timeoutMs: 60_000 },
     )
     ok = res.exitCode === 0
-    if (!ok) note = `分鏡縮圖產生失敗：${res.stderr.trim().split('\n').at(-1) ?? res.exitCode}`
+    if (!ok) note = `分鏡縮圖產生失敗：${errorLine(res.stderr) ?? `結束碼 ${res.exitCode}`}`
   } catch (err) {
     note = `分鏡縮圖產生失敗：${reason(err)}`
   }
@@ -280,7 +414,8 @@ async function regenFrames($: $Like) {
     }
   }
   const now = await $.clock.now()
-  await update($, run, x => ({ ...x, isFraming: false, framesAt: ok ? now : x.framesAt, lint: lint ?? x.lint, note: note ?? x.note }))
+  // 失敗原因另外存：refresh 每次重讀都會重設 note，放在 note 裡會被下一個工具呼叫清掉
+  await update($, run, x => ({ ...x, isFraming: false, framesAt: ok ? now : x.framesAt, lint: lint ?? x.lint, framesNote: note }))
 }
 
 /** 這次還沒算過縮圖，或分鏡表在上次算縮圖之後又改過（例如用 sed 改、面板認不出來）。 */
@@ -292,24 +427,69 @@ async function framesStale($: $Like): Promise<boolean> {
   return Boolean(stat && stat.mtimeMs > r.framesAt)
 }
 
-/** 第 n 幕縮圖的 SVG（VS Code 聊天面板等沒有 Image 的畫面用）。 */
-async function frameSvg($: $Like, file: string, framesAt: number, portrait: boolean): Promise<string | null> {
-  const key = `${file}#${framesAt}`
-  const cached = frameSvgs.get(key)
-  if (cached) return cached
-  const base64 = await ($.fs.read(file, { as: 'bytes' }) as Promise<unknown>).then(
-    v => (v as { base64?: string }).base64 ?? null,
-    () => null,
-  )
-  if (!base64) return null
-  const [w, h] = portrait ? [180, 320] : [320, 180]
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><image href="data:image/png;base64,${base64}" width="${w}" height="${h}"/></svg>`
-  frameSvgs.set(key, svg)
-  return svg
+/**
+ * 縮圖的 SVG（VS Code 聊天面板等沒有 Image 的畫面用）。files 依序找第一個存在的檔案（小 JPEG 優先，舊版只有 PNG）。
+ * 第 n 幕、第 n 拍各一張；version 是產生時間，換圖時快取自然失效。
+ */
+async function imageSvg($: $Like, files: string[], version: number, portrait: boolean): Promise<string | null> {
+  for (const file of files) {
+    const key = `${file}#${version}`
+    const cached = imageSvgs.get(key)
+    if (cached) return cached
+    const base64 = await ($.fs.read(file, { as: 'bytes' }) as Promise<unknown>).then(
+      v => (v as { base64?: string }).base64 ?? null,
+      () => null,
+    )
+    if (!base64) continue
+    const mime = /\.jpe?g$/i.test(file) ? 'image/jpeg' : 'image/png'
+    const [w, h] = portrait ? [180, 320] : [320, 180]
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}"><image href="data:${mime};base64,${base64}" width="${w}" height="${h}"/></svg>`
+    imageSvgs.set(key, svg)
+    return svg
+  }
+  return null
+}
+
+/** 依序放進縮圖，總量超過 budget 的改成 null（面板顯示文字），避免超過面板輸出上限。 */
+function withinBudget(svgs: (string | null)[], budget: number): (string | null)[] {
+  let used = 0
+  return svgs.map(svg => {
+    if (!svg || used + svg.length > budget) return null
+    used += svg.length
+    return svg
+  })
+}
+
+/** 讀 signature.mjs beats 寫的 beats/beats.json；比 since 舊（上一次留下的）就不算。 */
+async function loadBeats($: $Like, since: number) {
+  const r = await read($, run)
+  if (!r.out) return
+  const file = join(r.out, 'beats/beats.json')
+  const stat = await $.fs.stat(file).catch(() => null)
+  if (!stat || stat.mtimeMs < since) return
+  try {
+    const parsed = JSON.parse(await readText($, file)) as { beats?: unknown; problems?: unknown }
+    const beats = (Array.isArray(parsed.beats) ? parsed.beats : []).filter(
+      (b): b is BeatRow => typeof (b as BeatRow)?.beat === 'number' && typeof (b as BeatRow)?.file === 'string',
+    )
+    const problems = (Array.isArray(parsed.problems) ? parsed.problems : []).map(String)
+    const now = await $.clock.now()
+    await update($, run, x => ({
+      ...x,
+      beats,
+      beatsAt: now,
+      beatProblems: [...new Set(problems)],
+      isEdited: x.renderedAt !== null,
+      isConceptPicking: false,
+      openInput: null,
+    }))
+  } catch (err) {
+    await update($, run, x => ({ ...x, note: `讀不到 ${file}：${reason(err)}` }))
+  }
 }
 
 /** 改分鏡表；script.md 與分鏡一句一幕時，同一個動作也套到腳本上。 */
-async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
+async function editScenesNow($: $Like, op: <T>(list: T[]) => T[]): Promise<boolean | undefined> {
   const r = await read($, run)
   if (!r.out) return
   const boardPath = join(r.out, 'storyboard.json')
@@ -326,11 +506,55 @@ async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
   }
   await update($, run, x => ({ ...x, isEdited: true, openInput: null }))
   await refresh($)
-  await regenFrames($)
+  return true
+}
+
+/** 連按時排隊改檔，縮圖等改完再重算（重算合併成一次）。 */
+async function editScenes($: $Like, op: <T>(list: T[]) => T[]) {
+  if (await serial(() => editScenesNow($, op))) await regenFrames($)
+}
+
+/**
+ * 第 i 幕加長或縮短（delta 是 +1 或 -1）：用鏡頭模板時一次一拍，其他幕一次 0.5 秒。總長跟著變，其他幕不動。
+ * 範圍：模板幕 1–12 拍、其他幕 0.5–10 秒。快節奏建議單幕不超過 3 秒，但讓使用者自己決定：
+ * 超過時自動檢查會在那張卡上提醒（不擋算圖）。
+ */
+function durationLimits(row: SceneRow): { min: number; max: number } {
+  if (row.beats != null) return { min: 1, max: 12 }
+  return { min: 0.5, max: 10 }
+}
+
+async function editDurationNow($: $Like, i: number, delta: 1 | -1): Promise<boolean | undefined> {
+  const r = await read($, run)
+  const row = r.scenes[i]
+  if (!r.out || !row) return
+  const boardPath = join(r.out, 'storyboard.json')
+  const board = JSON.parse(await readText($, boardPath)) as { scenes: Record<string, unknown>[] }
+  const scene = board.scenes[i]
+  if (!scene) return
+  const { min, max } = durationLimits(row)
+  if (row.beats != null) {
+    const next = Math.max(min, Math.min(max, row.beats + delta))
+    if (next === row.beats) return
+    scene.beats = next
+  } else {
+    const next = Math.max(min, Math.min(max, Math.round((row.seconds + delta * 0.5) * 10) / 10))
+    if (next === row.seconds) return
+    scene.seconds = next
+  }
+  await $.fs.write(boardPath, JSON.stringify(board, null, 2) + '\n')
+  await update($, run, x => ({ ...x, isEdited: true, openInput: null }))
+  await refresh($)
+  return true
+}
+
+/** 連按時排隊改檔，縮圖等改完再重算（重算合併成一次）。 */
+async function editDuration($: $Like, i: number, delta: 1 | -1) {
+  if (await serial(() => editDurationNow($, i, delta))) await regenFrames($)
 }
 
 /** 改第 i 句的字：寫回 script.md（一句一幕時）與這一幕的字幕（用鏡頭模板、title／outro 是 heading；phone／card 沒有 caption 時也是 heading；其他是 caption）。 */
-async function editLine($: $Like, i: number, text: string) {
+async function editLineNow($: $Like, i: number, text: string): Promise<boolean | undefined> {
   const r = await read($, run)
   if (!r.out || !text) return
   const boardPath = join(r.out, 'storyboard.json')
@@ -350,11 +574,20 @@ async function editLine($: $Like, i: number, text: string) {
   }
   await update($, run, x => ({ ...x, isEdited: true, openInput: null }))
   await refresh($)
-  await regenFrames($)
+  return true
+}
+
+/** 連按時排隊改檔，縮圖等改完再重算（重算合併成一次）。 */
+async function editLine($: $Like, i: number, text: string) {
+  if (await serial(() => editLineNow($, i, text))) await regenFrames($)
 }
 
 /** 改腳本（上移、刪除、新增一句），寫回 script.md；分鏡表要等使用者按「照腳本重排分鏡」才改。 */
-async function editScript($: $Like, op: (list: string[]) => string[]) {
+function editScript($: $Like, op: (list: string[]) => string[]) {
+  return serial(() => editScriptNow($, op))
+}
+
+async function editScriptNow($: $Like, op: (list: string[]) => string[]) {
   const r = await read($, run)
   if (!r.out) return
   const scriptPath = join(r.out, 'script.md')
@@ -374,29 +607,58 @@ function styleLabel(id: string) {
   return s ? `${s.name}（${s.id}）` : id
 }
 
+function cutLabel(id: string) {
+  const c = cuts.find(x => x.id === id)
+  return c ? `${c.name}（${c.id}）` : id
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     cwd = (e as unknown as { cwd?: string }).cwd ?? ''
-    await loadStyles($)
+    await Promise.all([loadStyles($), loadCuts($)])
     await $.command.register({ name: 'demo-panel', description: '打開 make-demo-video 的四步進度面板' })
     await $.tool.register({
       name: TOOL_NAME,
       description:
-        'make-demo-video 的 ② 挑風格：在面板上顯示風格縮圖、比例（16:9／9:16）、秒數、幕數讓使用者選。' +
-        '呼叫後輸出 ② 進度行並結束這一回合；使用者按「確定」後，下一則訊息會是「② 選好了：…」，照它繼續 ③。',
+        'make-demo-video 的 ① 剪法與設定：讀完素材、寫腳本之前呼叫。在面板上顯示剪法（縮圖、適合什麼、你的推薦理由）、' +
+        '比例（16:9／9:16）、秒數、幕數讓使用者選；外觀一律從素材取色。' +
+        '呼叫後輸出 ① 進度行並結束這一回合；使用者按「確定」後，下一則訊息會是「① 選好了：…」，照選的剪法寫腳本（②）。',
       inputSchema: {
         type: 'object',
         properties: {
           out: { type: 'string', description: '輸出資料夾，例如 docs/demo' },
-          suggested: {
+          cuts: {
             type: 'array',
             items: { type: 'string' },
-            description: '依素材推薦的內建風格 id，最多三個，第一個是預設選取',
+            description: '依素材推薦的剪法 id（cuts/<id>/），最多三個，第一個是預設選取',
           },
-          scenes: { type: 'integer', description: '腳本句數，當幕數的預設值' },
+          reason: {
+            type: 'string',
+            description: '一句話說明為什麼第一個剪法適合這次的素材，要提到素材本身（例如「作品集網站、截圖完整，適合捲動導覽」）',
+          },
+          scenes: { type: 'integer', description: '建議幕數；已備好腳本時是腳本句數' },
           seconds: { type: 'integer', description: '建議的總秒數' },
         },
         required: ['out'],
+      },
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: CONCEPT_TOOL,
+      description:
+        'make-demo-video 生成式剪法（招牌片）的 ③ 概念：使用者選好剪法、腳本寫好之後呼叫。在面板上列出概念讓使用者挑一個（也可以「你來決定」或自己寫）。' +
+        '呼叫後輸出 ③ 概念進度行並結束這一回合；使用者挑好後，下一則訊息會是「③ 概念選好了：…」，照它寫 beats.md 與 reel.html。',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          out: { type: 'string', description: '輸出資料夾，例如 docs/demo' },
+          concepts: {
+            type: 'array',
+            items: { type: 'string' },
+            description: '三個概念，每個一行「A 變成 B 變成 C」，最後回到 A；第一個是你推薦的',
+          },
+        },
+        required: ['concepts'],
       },
       isDeferred: false,
     })
@@ -417,40 +679,75 @@ export const register: Register = on => {
   on('tool.run', { tool: 'mcp__make-demo-video__show_options' }, async ($, e) => {
     const args = ((e as unknown as { input?: object }).input ?? e) as {
       out?: unknown
-      suggested?: unknown
+      cuts?: unknown
+      reason?: unknown
       scenes?: unknown
       seconds?: unknown
     }
-    const ids = new Set(styles.map(s => s.id))
-    const suggested = (Array.isArray(args.suggested) ? args.suggested : []).map(String).filter(id => ids.has(id)).slice(0, 3)
+    if (cuts.length === 0) await loadCuts($)
+    const out = typeof args.out === 'string' && args.out ? await outDir($, args.out) : null
+    const cutIds = new Set(cuts.map(c => c.id))
+    const suggested = (Array.isArray(args.cuts) ? args.cuts : []).map(String).filter(id => cutIds.has(id)).slice(0, 3)
     const r = await read($, run)
     if (!r.isActive) await start($)
-    await update($, run, x => ({
-      ...x,
-      out: typeof args.out === 'string' && args.out ? args.out : x.out,
-      suggested,
-      isPicking: true,
-      isChosen: false,
-      choice: {
-        ...x.choice,
-        style: suggested[0] ?? x.choice.style,
-        scenes: clamp(Number(args.scenes) || x.script.length || x.choice.scenes, MIN_SCENES, MAX_SCENES),
-        seconds: nearestSeconds(Number(args.seconds) || x.choice.seconds),
-      },
-    }))
+    await update($, run, x => {
+      const cut = suggested[0] ?? (cutIds.has(x.choice.cut) ? x.choice.cut : cuts[0]?.id ?? DEFAULT_CUT)
+      const defaults = cuts.find(c => c.id === cut)?.defaults ?? {}
+      return {
+        ...x,
+        out: out ?? x.out,
+        suggested,
+        reason: typeof args.reason === 'string' && args.reason.trim() ? args.reason.trim() : null,
+        isPicking: true,
+        isChosen: false,
+        choice: {
+          cut,
+          style: CUSTOM,
+          aspect: defaults.aspect ?? x.choice.aspect,
+          scenes: clamp(Number(args.scenes) || x.script.length || x.choice.scenes, MIN_SCENES, MAX_SCENES),
+          seconds: nearestSeconds(Number(args.seconds) || defaults.seconds || x.choice.seconds),
+        },
+      }
+    })
     await refresh($)
     const opened = await $.ui.open({ id: PANE, title: 'make-demo-video', focus: true })
     // 沒有畫面能放面板（例如 claude -p）時，交給 .catch 改用對話框問
     if (!opened.isPlaced) throw new Error('pane not placed')
     return {
       result:
-        '選項已顯示在 make-demo-video 面板上。現在輸出 ② 進度行（例如「② 風格｜請在右側面板選擇風格、比例、秒數與幕數」），然後結束這一回合，不要再呼叫其他工具。' +
-        '使用者按「確定」後，下一則訊息會是「② 選好了：…」。',
+        '選項已顯示在 make-demo-video 面板上。現在輸出 ① 進度行（例如「① 剪法｜請在右側面板選擇剪法、比例、秒數與幕數」），然後結束這一回合，不要再呼叫其他工具，也還不要寫腳本。' +
+        '使用者按「確定」後，下一則訊息會是「① 選好了：…」。',
     } as never
-  }).catch(() => ({ deny: 'make-demo-video 面板無法顯示選項：請改用 AskUserQuestion 問使用者（比例、秒數、幕數、風格）。' }))
+  }).catch(() => ({ deny: 'make-demo-video 面板無法顯示選項：請改用 AskUserQuestion 問使用者（剪法、比例、秒數、幕數）。' }))
+
+  on('tool.run', { tool: `mcp__make-demo-video__${CONCEPT_TOOL}` }, async ($, e) => {
+    const args = ((e as unknown as { input?: object }).input ?? e) as { out?: unknown; concepts?: unknown }
+    const concepts = (Array.isArray(args.concepts) ? args.concepts : []).map(c => plain(c).trim()).filter(Boolean).slice(0, 4)
+    if (concepts.length < 2) return { deny: 'show_concepts 至少要給兩個概念（建議三個）。' }
+    const r = await read($, run)
+    if (!r.isActive) await start($)
+    const out = typeof args.out === 'string' && args.out ? await outDir($, args.out) : null
+    await update($, run, x => ({
+      ...x,
+      out: out ?? x.out,
+      concepts,
+      isConceptPicking: true,
+      concept: null,
+      openInput: null,
+    }))
+    const opened = await $.ui.open({ id: PANE, title: 'make-demo-video', focus: true })
+    if (!opened.isPlaced) throw new Error('pane not placed')
+    return {
+      result:
+        '概念已顯示在 make-demo-video 面板的 ③。現在輸出 ③ 進度行（例如「③ 概念｜請在右側面板挑一個概念」），然後結束這一回合，不要再呼叫其他工具。' +
+        '使用者挑好後，下一則訊息會是「③ 概念選好了：…」。',
+    } as never
+  }).catch(() => ({ deny: 'make-demo-video 面板無法顯示概念：請改用 AskUserQuestion 問使用者要哪個概念。' }))
 
   // 每個工具呼叫結束後：認出輸出資料夾、認出算圖完成，再重讀檔案。
   on('tool.call', async ($, e, next) => {
+    // 指令裡的相對路徑照「執行前」的工作目錄解析（指令裡的 cd 會留到之後）
+    const base = await $.session.cwd().catch(() => cwd)
     const ran = await next(e)
     const r = await read($, run)
     if (!r.isActive) {
@@ -461,7 +758,7 @@ export const register: Register = on => {
     // 先用工具呼叫裡寫出的內容更新（不必等讀檔），輸出資料夾也以實際寫入的位置為準
     let wroteBoard = false
     let styleChanged = false
-    for (const w of writesIn(e)) {
+    for (const w of writesIn(e).map(x => ({ ...x, path: resolveIn(base, x.path) }))) {
       if (w.path.endsWith('script.md')) {
         const script = parseScript(w.content)
         await update($, run, x => ({ ...x, out: dirOf(w.path) ?? x.out, script: script.length ? script : x.script }))
@@ -485,7 +782,7 @@ export const register: Register = on => {
     const blob = JSON.stringify(e)
     if (!(await read($, run)).out) {
       const m = blob.match(/([\w.~/-]*\/)?(?:script\.md|storyboard\.json)/)
-      if (m) await update($, run, x => ({ ...x, out: (m[1] ?? '').replace(/\/+$/, '') || '.' }))
+      if (m) await update($, run, x => ({ ...x, out: resolveIn(base, (m[1] ?? '').replace(/\/+$/, '') || '.') }))
     }
     const command = String((e as unknown as { command?: string }).command ?? '')
     if (e.tool === 'Bash' && /render\.mjs/.test(command) && !('deny' in ran && ran.deny)) {
@@ -506,15 +803,31 @@ export const register: Register = on => {
       // 風格換了（例如使用者在對話裡說「換成霓虹」），分鏡縮圖也換成新風格
       if (used && used !== before) styleChanged = true
     }
+    // 招牌片：寫或改了 reel.html（算過圖之後）就要重新合成；跑完 signature.mjs beats 讀逐拍分鏡板；signature.mjs render 跑完就是 ④ 完成
+    const edited = e.tool === 'Edit' ? String((e as unknown as { file_path?: string }).file_path ?? '') : ''
+    if (r.renderedAt !== null && (edited.endsWith('reel.html') || writesIn(e).some(w => w.path.endsWith('reel.html')))) {
+      await update($, run, x => ({ ...x, isEdited: true }))
+    }
+    const beatsReel = e.tool === 'Bash' ? reelOf(command, 'beats') : null
+    if (beatsReel) {
+      if (!(await read($, run)).out) await update($, run, x => ({ ...x, out: dirOf(resolveIn(base, beatsReel)) }))
+      await loadBeats($, (await read($, run)).beatsAt ?? r.startedAt)
+    }
+    if (e.tool === 'Bash' && reelOf(command, 'render') && !('deny' in ran && ran.deny)) {
+      const took = JSON.stringify((ran as { result?: unknown }).result ?? '').match(/花了 ([\d.]+) 秒/)
+      if (took) {
+        const now = await $.clock.now()
+        await update($, run, x => ({ ...x, renderedAt: now, renderSeconds: Number(took[1]), isEdited: false, isChosen: true }))
+      }
+    }
     // Claude 跑 check.mjs 檢查輸出資料夾裡的分鏡表：就算這次沒寫過它（沿用上一次留下的），也當成這次的分鏡板
     let adopted = false
     const checked = e.tool === 'Bash' ? checkedBoard(command) : null
     if (checked) {
-      const dir = dirOf(checked) ?? '.'
+      const dir = dirOf(resolveIn(base, checked))
       const out = (await read($, run)).out
-      const same = (a: string) => absolute(a.replace(/^\.\/+/, '')).replace(/\/+$/, '')
       if (!out) await update($, run, x => ({ ...x, out: dir }))
-      adopted = !out || same(dir) === same(out)
+      adopted = !out || dir === resolveIn(base, out)
     }
     await refresh($, adopted)
     // Claude 改了分鏡表（含 Edit 工具）：重算分鏡縮圖。process.run 等待的時間不算進這個 hook 的時間預算。
@@ -529,6 +842,7 @@ export const register: Register = on => {
     const Image = e.surface === 'terminal' && 'Image' in els ? els.Image : null
     const Svg = 'Svg' in els ? els.Svg : null
     if (styles.length === 0) await loadStyles($)
+    if (cuts.length === 0) await loadCuts($)
     const r = await read($, run)
     const cols = Math.max(24, e.props.bodyColumns ?? 40)
 
@@ -536,19 +850,22 @@ export const register: Register = on => {
       return (
         <Box flexDirection="column">
           <Text bold>make-demo-video</Text>
-          <Text dimColor>輸入 /make-demo-video 開始；面板會跟著 ① 腳本 → ② 風格 → ③ 分鏡 → ④ 算圖 前進。</Text>
+          <Text dimColor>輸入 /make-demo-video 開始；面板會跟著 ① 剪法 → ② 腳本 → ③ 分鏡 → ④ 算圖 前進。</Text>
         </Box>
       )
     }
 
+    // 生成式剪法（招牌片）的 ③ 是逐拍分鏡板，不是分鏡表
+    const generate = cuts.find(k => k.id === r.choice.cut)?.mode === 'generate'
+    const hasBoard = generate ? r.beats.length > 0 : r.scenes.length > 0
+    // ① 在使用者指定好一切、Claude 跳過面板時，寫出腳本或分鏡表也算選好了
     const done = [
+      !r.isPicking && (r.isChosen || r.script.length > 0 || hasBoard),
       r.script.length > 0,
-      !r.isPicking && (r.isChosen || r.scenes.length > 0),
-      r.scenes.length > 0,
+      hasBoard,
       r.renderedAt !== null && !r.isEdited,
     ]
     const current = done.indexOf(false)
-    const hasBoard = r.scenes.length > 0
     const setChoice = (patch: Partial<Choice>) => update($, run, x => ({ ...x, choice: { ...x.choice, ...patch } }))
 
     const head = (i: number, title: string, detail: string) => (
@@ -560,15 +877,17 @@ export const register: Register = on => {
       </Text>
     )
 
-    // ① 腳本
-    const step1 = (
+    // ② 腳本
+    const scriptStep = (
       <Box flexDirection="column">
         {head(
-          0,
+          1,
           '腳本',
-          done[0]
+          done[1]
             ? `${join(r.out ?? '', 'script.md')}・${r.script.length} 句${hasBoard ? '（在下方分鏡板編輯）' : ''}`
-            : '讀素材中…',
+            : current === 1
+              ? `照剪法 ${cutLabel(r.choice.cut)} 寫腳本中…`
+              : '',
         )}
         {(hasBoard ? [] : r.script).map((line, i) => (
           <Box flexDirection="row" paddingLeft={3}>
@@ -588,7 +907,7 @@ export const register: Register = on => {
             ) : null}
           </Box>
         ))}
-        {r.out && done[0] && !hasBoard ? (
+        {r.out && done[1] && !hasBoard ? (
           <Box paddingLeft={3}>
             <Input
               key="line-add"
@@ -601,44 +920,42 @@ export const register: Register = on => {
       </Box>
     )
 
-    // ② 風格：縮圖、色票、比例、秒數、幕數
+    // ① 剪法與設定：剪法大卡（主角）、比例、秒數、幕數；外觀一律從素材取色
     const c = r.choice
     const pick = r.isPicking && !r.isChosen
-    const cellCols = 14
-    const perRow = Math.max(2, Math.min(6, Math.floor((cols - 3) / (cellCols + 1))))
-    const options = [
-      ...styles,
-      { id: CUSTOM, name: '從素材定義', swatch: [] as string[], thumb: null, svg: null },
-    ]
-    const rows: (typeof options)[] = []
-    for (let i = 0; i < options.length; i += perRow) rows.push(options.slice(i, i + perRow))
-    const cell = (s: (typeof options)[number], i: number) => {
-      const isOn = c.style === s.id
+    const thumbBox = (t: Thumb & { id: string; name: string }, cellCols: number, rows: number, key: string, fallback: string) =>
+      Image && t.thumb ? (
+        <Image key={key} source={{ file: t.thumb, format: 'png' }} columns={cellCols} rows={rows} alt={t.name} />
+      ) : Svg && t.svg ? (
+        <Svg source={t.svg} alt={t.name} width={cellCols * 8} height={cellCols * 4.5} />
+      ) : (
+        <Text dimColor>{fallback}</Text>
+      )
+
+    const cutCols = 20
+    const cutsPerRow = Math.max(1, Math.min(3, Math.floor((cols - 3) / (cutCols + 1))))
+    const cutRows: CutInfo[][] = []
+    for (let i = 0; i < cuts.length; i += cutsPerRow) cutRows.push(cuts.slice(i, i + cutsPerRow))
+    const cutCard = (k: CutInfo, i: number) => {
+      const isOn = c.cut === k.id
       return (
-        <Box flexDirection="column" width={cellCols} marginRight={1}>
-          {Image && s.thumb ? (
-            <Image key={`thumb-${s.id}`} source={{ file: s.thumb, format: 'png' }} columns={cellCols} rows={4} alt={s.name} />
-          ) : Svg && s.svg ? (
-            <Svg source={s.svg} alt={s.name} width={112} height={63} />
-          ) : (
-            <Text dimColor>{s.id === CUSTOM ? '  取網站色彩' : ' '}</Text>
-          )}
-          <Text>
-            {s.swatch.map(color => (
-              <Text color={color}>██</Text>
-            ))}
-            {r.suggested.includes(s.id) ? <Text color="warning"> 推薦</Text> : null}
-          </Text>
+        <Box flexDirection="column" width={cutCols} marginRight={1}>
+          {thumbBox(k, cutCols, 5, `cut-thumb-${k.id}`, ' ')}
           <Button
-            key={`style-${s.id}`}
-            label={`${isOn ? '●' : '○'} ${i + 1} ${s.name}`}
+            key={`cut-${k.id}`}
+            label={`${isOn ? '●' : '○'} ${i + 1} ${k.name}`}
             hotkey={String(i + 1)}
             variant={isOn ? 'primary' : 'secondary'}
-            onPress={() => setChoice({ style: s.id })}
+            onPress={() => setChoice({ cut: k.id })}
           />
+          {r.suggested.includes(k.id) ? <Text color="warning">推薦</Text> : null}
+          <Text dimColor wrap="wrap">
+            {k.suits}
+          </Text>
         </Box>
       )
     }
+
     const choiceButton = (key: string, label: string, isOn: boolean, onPress: () => unknown) => (
       <Button key={key} label={`${isOn ? '●' : '○'} ${label}`} variant={isOn ? 'primary' : 'secondary'} onPress={onPress} />
     )
@@ -647,36 +964,49 @@ export const register: Register = on => {
       const was = x.pickedFrom
       const now = x.choice
       await update($, run, y => ({ ...y, isChosen: true, isPicking: false, pickedFrom: null }))
-      const summary = `風格 ${styleLabel(now.style)}、比例 ${now.aspect}、約 ${now.seconds} 秒、${now.scenes} 幕`
-      if (!was || x.scenes.length === 0) {
-        await $.prompt.submit({ text: `② 選好了：${summary}` })
+      const isGen = cuts.find(k => k.id === now.cut)?.mode === 'generate'
+      const summary = `剪法 ${cutLabel(now.cut)}、比例 ${now.aspect}、約 ${now.seconds} 秒${isGen ? '' : `、${now.scenes} 幕`}`
+      const hasWork = x.scenes.length > 0 || x.beats.length > 0
+      if (was && was.cut !== now.cut && (x.script.length > 0 || hasWork)) {
+        // 剪法決定腳本怎麼寫：換剪法就要照新剪法重寫腳本，再重排分鏡
+        await $.prompt.submit({
+          text: `① 改選：${summary}（原本剪法 ${cutLabel(was.cut)}）；照新剪法重寫 script.md 與分鏡表`,
+        })
+        return
+      }
+      if (!was || !hasWork) {
+        await $.prompt.submit({ text: `① 選好了：${summary}` })
+        return
+      }
+      if (isGen) {
+        if (was.aspect !== now.aspect || was.seconds !== now.seconds) {
+          await $.prompt.submit({
+            text: `① 改選：${summary}（原本 ${was.aspect}、約 ${was.seconds} 秒）；概念不變，照新設定改寫 reel.html`,
+          })
+        }
         return
       }
       const replan = was.aspect !== now.aspect || was.seconds !== now.seconds || was.scenes !== now.scenes
       if (replan) {
         await $.prompt.submit({
-          text: `② 改選：${summary}（原本 ${was.aspect}、約 ${was.seconds} 秒、${was.scenes} 幕）；照新設定重排分鏡表`,
+          text: `① 改選：${summary}（原本 ${was.aspect}、約 ${was.seconds} 秒、${was.scenes} 幕）；照新設定重排分鏡表`,
         })
-      } else if (was.style !== now.style) {
-        // 只換風格：分鏡表不用動，面板自己用新風格重算縮圖；合成影片的訊息會帶上新風格
-        await update($, run, y => ({ ...y, isEdited: y.renderedAt !== null ? true : y.isEdited }))
-        await regenFrames($)
       }
     }
     const repick = () =>
       update($, run, x => ({ ...x, isPicking: true, isChosen: false, pickedFrom: x.choice, openInput: null }))
-    const step2 = (
+    const pickStep = (
       <Box flexDirection="column">
         {head(
-          1,
-          '風格',
-          done[1] || r.isChosen
-            ? `${styleLabel(c.style)}・${c.aspect}・${c.seconds} 秒・${c.scenes} 幕`
+          0,
+          '剪法與設定',
+          done[0] || r.isChosen
+            ? `${cutLabel(c.cut)}・${generate ? '從素材取色' : styleLabel(c.style)}・${c.aspect}・${c.seconds} 秒${generate ? '' : `・${c.scenes} 幕`}`
             : pick
               ? r.pickedFrom
                 ? '重新選，按「確定」'
                 : '請選擇，按「確定」'
-              : '',
+              : '讀素材中…',
         )}
         {r.isChosen && !pick ? (
           <Box paddingLeft={3}>
@@ -685,9 +1015,15 @@ export const register: Register = on => {
         ) : null}
         {pick ? (
           <Box flexDirection="column" paddingLeft={3}>
-            {rows.map((row, ri) => (
-              <Box flexDirection="row">{row.map((s, ci) => cell(s, ri * perRow + ci))}</Box>
+            {cutRows.map((row, ri) => (
+              <Box flexDirection="row">{row.map((k, ci) => cutCard(k, ri * cutsPerRow + ci))}</Box>
             ))}
+            {r.reason ? (
+              <Text wrap="wrap">
+                <Text color="warning">Claude：</Text>
+                {r.reason}
+              </Text>
+            ) : null}
             <Box flexDirection="row">
               <Text>比例 </Text>
               {(['16:9', '9:16'] as Aspect[]).map(a =>
@@ -698,7 +1034,7 @@ export const register: Register = on => {
               <Text>秒數 </Text>
               {SECONDS.map(s => choiceButton(`sec-${s}`, `${s}s`, c.seconds === s, () => setChoice({ seconds: s })))}
             </Box>
-            <Box flexDirection="row">
+            {generate ? null : <Box flexDirection="row">
               <Text>幕數 </Text>
               <Button key="scenes-down" label="−" onPress={() => setChoice({ scenes: clamp(c.scenes - 1, MIN_SCENES, MAX_SCENES) })} />
               <Text> {c.scenes} 幕 </Text>
@@ -706,7 +1042,7 @@ export const register: Register = on => {
               {r.script.length > 0 && c.scenes !== r.script.length ? (
                 <Text dimColor> （腳本 {r.script.length} 句，Claude 會調整成 {c.scenes} 句）</Text>
               ) : null}
-            </Box>
+            </Box>}
             <Button key="confirm" label="確定 ↵" variant="primary" autoFocus onPress={confirm} />
           </Box>
         ) : null}
@@ -719,7 +1055,15 @@ export const register: Register = on => {
     const linked = r.script.length === r.scenes.length
     const framesAt = r.framesAt ?? 0
     const framePath = (i: number) => join(join(r.out ?? '', 'frames'), `scene-${i + 1}.png`)
-    const svgs = Svg && !Image && r.framesAt ? await Promise.all(r.scenes.map((_, i) => frameSvg($, framePath(i), framesAt, portrait))) : []
+    // 縮圖 SVG 的額度：扣掉 ① 剪法卡縮圖（只有選剪法時才畫）
+    const budget = SVG_BUDGET - (pick && !Image ? cuts.reduce((sum, k) => sum + (k.svg?.length ?? 0), 0) : 0)
+    const svgs =
+      Svg && !Image && r.framesAt && !generate
+        ? withinBudget(
+            await Promise.all(r.scenes.map((_, i) => imageSvg($, [framePath(i).replace(/\.png$/, '.jpg'), framePath(i)], framesAt, portrait))),
+            budget,
+          )
+        : []
     const thumbOf = (i: number) => {
       if (!r.framesAt) return <Text dimColor>{r.isFraming ? '產生縮圖中…' : ' '}</Text>
       if (Image) {
@@ -745,9 +1089,21 @@ export const register: Register = on => {
           <Box flexDirection="row" gap={1}>
             {thumbOf(i)}
             <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-              <Text dimColor>
-                {i + 1} ・ {s.kind} ・ {s.seconds}s
-              </Text>
+              <Box flexDirection="row">
+                <Text dimColor>
+                  {i + 1} ・ {s.kind} ・{' '}
+                </Text>
+                {(s.beats ?? s.seconds) > durationLimits(s).min ? (
+                  <Button key={`shorter-${i}`} label="−" onPress={() => editDuration($, i, -1)} />
+                ) : null}
+                <Text>
+                  {' '}
+                  {s.seconds}s{' '}
+                </Text>
+                {(s.beats ?? s.seconds) < durationLimits(s).max ? (
+                  <Button key={`longer-${i}`} label="＋" onPress={() => editDuration($, i, 1)} />
+                ) : null}
+              </Box>
               <Text wrap="wrap">{line}</Text>
               {r.lint
                 .filter(w => w.row === i)
@@ -765,11 +1121,13 @@ export const register: Register = on => {
                   label="＋ 插一句"
                   onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'insert' ? null : { kind: 'insert' as const, index: i } }))}
                 />
-                <Button
-                  key={`edit-${i}`}
-                  label="✎ 改字"
-                  onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'edit' ? null : { kind: 'edit' as const, index: i } }))}
-                />
+                {s.fixedText ? null : (
+                  <Button
+                    key={`edit-${i}`}
+                    label="✎ 改字"
+                    onPress={() => update($, run, x => ({ ...x, openInput: input?.kind === 'edit' ? null : { kind: 'edit' as const, index: i } }))}
+                  />
+                )}
                 <Button
                   key={`redo-${i}`}
                   label="⟳ 重畫"
@@ -820,7 +1178,134 @@ export const register: Register = on => {
         </Box>
       )
     }
-    const step3 = (
+    // ③（招牌片）：挑概念 → 逐拍分鏡板，一小節一排，每拍可以留意見給 Claude 只改那一拍
+    const beatsAt = r.beatsAt ?? 0
+    const beatSvgs =
+      Svg && !Image && generate && r.beatsAt
+        ? withinBudget(
+            await Promise.all(r.beats.map(b => imageSvg($, [b.thumb, b.file].filter((f): f is string => Boolean(f)).map(f => join(r.out ?? '', f)), beatsAt, portrait))),
+            budget,
+          )
+        : []
+    const perBar = 4
+    const bars: BeatRow[][] = []
+    for (let i = 0; i < r.beats.length; i += perBar) bars.push(r.beats.slice(i, i + perBar))
+    const beatThumb = (b: BeatRow, i: number) => {
+      if (Image) {
+        return (
+          <Image
+            key={`beat-img-${i}`}
+            source={{ file: absolute(join(r.out ?? '', b.file)), format: 'png', generation: beatsAt }}
+            columns={portrait ? 6 : 12}
+            rows={portrait ? 6 : 3}
+            alt={`第 ${b.beat} 拍`}
+          />
+        )
+      }
+      const svg = beatSvgs[i]
+      return Svg && svg ? <Svg source={svg} alt={`第 ${b.beat} 拍`} width={portrait ? 54 : 96} height={portrait ? 96 : 54} /> : <Text dimColor>（縮圖略）</Text>
+    }
+    const pickConcept = async (text: string | null) => {
+      await update($, run, x => ({ ...x, isConceptPicking: false, concept: text ?? '你來決定' }))
+      await ask(text ? `③ 概念選好了：${text}` : '③ 概念選好了：你來決定（從面板上的概念挑最適合的）')
+    }
+    const openBeat = r.openInput?.kind === 'beat' ? r.openInput.index : null
+    const step3Generate = (
+      <Box flexDirection="column" gap={1}>
+        {head(
+          2,
+          '逐拍分鏡板',
+          hasBoard
+            ? `${join(r.out ?? '', 'reel.html')}・${r.beats.length} 拍${r.beatProblems.length ? `・檢查有 ${r.beatProblems.length} 項沒過` : '・檢查通過'}`
+            : r.isConceptPicking
+              ? '挑一個貫穿全片的概念'
+              : r.concept
+                ? '照概念寫 reel.html 中…'
+                : '',
+        )}
+        {r.isConceptPicking ? (
+          <Box flexDirection="column" paddingLeft={3}>
+            <Text dimColor wrap="wrap">
+              第一格與最後一格相同，影片可以循環。
+            </Text>
+            {r.concepts.map((concept, i) => (
+              <Box flexDirection="row" gap={1}>
+                <Button key={`concept-${i}`} label={`${i + 1}`} hotkey={String(i + 1)} variant={i === 0 ? 'primary' : 'secondary'} onPress={() => pickConcept(concept)} />
+                <Box flexGrow={1} flexShrink={1}>
+                  <Text wrap="wrap">
+                    {concept}
+                    {i === 0 ? <Text color="warning">（推薦）</Text> : null}
+                  </Text>
+                </Box>
+              </Box>
+            ))}
+            <Box flexDirection="row" gap={1}>
+              <Button key="concept-auto" label="你來決定" onPress={() => pickConcept(null)} />
+            </Box>
+            <Input
+              key="concept-own"
+              placeholder="或寫你自己的概念：A 變成 B 變成 C，最後回到 A…"
+              submitLabel="用這個"
+              onSubmit={value => (value.trim() ? pickConcept(value.trim()) : undefined)}
+            />
+          </Box>
+        ) : r.concept ? (
+          <Box paddingLeft={3}>
+            <Text wrap="wrap">
+              <Text dimColor>概念：</Text>
+              {r.concept}
+            </Text>
+          </Box>
+        ) : null}
+        {r.beatProblems.map((p, n) => (
+          <Text key={`beat-problem-${n}`} color="warning" wrap="wrap">
+            {'   '}⚠ {p}
+          </Text>
+        ))}
+        {bars.map((bar, bi) => (
+          <Box flexDirection="column" paddingLeft={3}>
+            <Text dimColor>
+              第 {bi + 1} 小節
+            </Text>
+            <Box flexDirection="row" gap={1}>
+              {bar.map((b, j) => {
+                const i = bi * perBar + j
+                return (
+                  <Box flexDirection="column">
+                    {beatThumb(b, i)}
+                    <Box flexDirection="row">
+                      <Text dimColor>
+                        {b.beat}・{b.at.toFixed(1)}s{' '}
+                      </Text>
+                      <Button
+                        key={`beat-${i}`}
+                        label="✎"
+                        onPress={() => update($, run, x => ({ ...x, openInput: openBeat === i ? null : { kind: 'beat' as const, index: i } }))}
+                      />
+                    </Box>
+                  </Box>
+                )
+              })}
+            </Box>
+            {openBeat !== null && Math.floor(openBeat / perBar) === bi ? (
+              <Input
+                key={`beat-input-${openBeat}`}
+                placeholder={`第 ${r.beats[openBeat]?.beat} 拍想怎麼改？例如「太空了，補一個元素」`}
+                submitLabel="改這拍"
+                autoFocus
+                onSubmit={async value => {
+                  const b = r.beats[openBeat]
+                  if (!b || !value.trim()) return
+                  await update($, run, x => ({ ...x, openInput: null }))
+                  await ask(`改第 ${b.beat} 拍（${b.at.toFixed(1)} 秒）：${value.trim()}；只改這一拍，其他拍不動`)
+                }}
+              />
+            ) : null}
+          </Box>
+        ))}
+      </Box>
+    )
+    const step3 = generate ? step3Generate : (
       <Box flexDirection="column" gap={1}>
         {head(
           2,
@@ -854,7 +1339,7 @@ export const register: Register = on => {
     )
 
     // ④ 合成影片：確認分鏡板後才算
-    const canCompose = hasBoard && !r.isPicking && (r.renderedAt === null || r.isEdited)
+    const canCompose = hasBoard && !r.isPicking && !r.isConceptPicking && (r.renderedAt === null || r.isEdited)
     const step4 = (
       <Box flexDirection="column">
         {head(
@@ -863,7 +1348,9 @@ export const register: Register = on => {
           done[3]
             ? `${join(r.out ?? '', 'demo.mp4')}${r.renderSeconds ? `・${r.renderSeconds} 秒` : ''} → 結果頁已打開`
             : canCompose
-              ? '確認分鏡板後按「合成影片」'
+              ? generate
+                ? '逐拍看過後按「合成影片」（約 1.5 分鐘）'
+                : '確認分鏡板後按「合成影片」'
               : '',
         )}
         {canCompose ? (
@@ -872,7 +1359,13 @@ export const register: Register = on => {
               key="compose"
               label="▶ 合成影片"
               variant="primary"
-              onPress={() => ask(`合成影片：分鏡板確認好了，照目前的 storyboard.json、用風格 ${styleArg(r)} 算圖`)}
+              onPress={() =>
+                ask(
+                  generate
+                    ? '合成影片：逐拍分鏡板確認好了，照目前的 reel.html 算圖'
+                    : `合成影片：分鏡板確認好了，照目前的 storyboard.json、用風格 ${styleArg(r)} 算圖`,
+                )
+              }
             />
           </Box>
         ) : null}
@@ -881,10 +1374,11 @@ export const register: Register = on => {
 
     return (
       <Box flexDirection="column" gap={1}>
-        {step1}
-        {step2}
+        {pickStep}
+        {scriptStep}
         {step3}
         {step4}
+        {r.framesNote ? <Text color="warning" wrap="wrap">⚠ {r.framesNote}</Text> : null}
         {r.note ? <Text dimColor>⚠ {r.note}</Text> : null}
       </Box>
     )

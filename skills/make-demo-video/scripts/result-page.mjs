@@ -1,6 +1,9 @@
 // 結果頁 demo.html：顏色、字型、圓角都取自這支影片的風格檔，換風格重出時結果頁跟著換。
 // 直式（9:16）影片窄，左影片右介紹；橫式和 1:1 影片寬，影片全寬、下載卡片排在下面。
-import { escapeHtml } from "./lib.mjs";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import QRCode from "qrcode";
+import { escapeHtml, SKILL_DIR } from "./lib.mjs";
 
 function luminance(hex) {
   const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(hex.trim());
@@ -54,7 +57,19 @@ const mb = (bytes) => (bytes / 1048576).toFixed(1) + " MB";
 const safeHref = (url) => (/^https?:\/\//i.test(url || "") ? escapeHtml(url) : "");
 const bare = (url) => url.replace(/^https?:\/\//i, "").replace(/\/$/, "");
 
-// files：{ mp4, mp4Bytes?, gif?, gifBytes?, gifWidth?, qrSvg?, credit? }（credit 由 render.mjs 的 loadCredit 產生）
+// 結果頁角落的「用 make-demo-video 做的」：網址取自 plugin.json 的 repository，影片本身就指向這個 repo 時不重複放。
+export async function loadCredit(boardUrl) {
+  try {
+    const plugin = JSON.parse(await readFile(path.join(SKILL_DIR, "..", "..", ".claude-plugin", "plugin.json"), "utf8"));
+    const url = plugin.repository;
+    if (!url || boardUrl?.replace(/\/$/, "") === url.replace(/\/$/, "")) return null;
+    return { url, qrSvg: await QRCode.toString(url, { type: "svg", margin: 0 }) };
+  } catch {
+    return null; // 不是以 plugin 形式安裝（沒有 plugin.json）時就不放
+  }
+}
+
+// files：{ mp4, mp4Bytes?, gif?, gifBytes?, gifWidth?, qrSvg?, credit? }（credit 由 loadCredit 產生）
 export function resultPage(board, style, files) {
   const c = style.colors;
   const muted = readableMuted(c);
@@ -62,7 +77,7 @@ export function resultPage(board, style, files) {
   const r = style.radius;
   const title = escapeHtml(board.title || "demo");
   const href = safeHref(board.url);
-  const meta = [escapeHtml(style.name || style.id), `${board.duration.toFixed(0)} 秒`, `${board.raw.length} 幕`, `${board.width}×${board.height}`].join(" · ");
+  const meta = [escapeHtml(style.name || style.id), `${board.duration.toFixed(0)} 秒`, board.count ?? `${board.raw.length} 幕`, `${board.width}×${board.height}`].join(" · ");
   const sizeOf = (bytes) => (bytes ? ` · ${mb(bytes)}` : "");
 
   // 出處分三行：誰做的、repo 網址、請喜歡的人點 Star（skill 開源後用來讓更多人看到）

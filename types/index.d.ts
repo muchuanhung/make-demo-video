@@ -2,14 +2,21 @@
 
 export type Aspect = '16:9' | '9:16'
 
-/** 使用者在 ② 選的設定；style 是內建風格 id，或 "custom"（從素材定義風格）。 */
-export type Choice = { style: string; aspect: Aspect; seconds: number; scenes: number }
+/** 使用者在 ① 選的設定；cut 是剪法 id（cuts/<id>/），style 是內建風格 id，或 "custom"（從素材定義風格）。 */
+export type Choice = { cut: string; style: string; aspect: Aspect; seconds: number; scenes: number }
 
-/** 分鏡表裡的一幕，面板只需要這幾個欄位。kind 是鏡頭模板的中文名稱（用模板時）或幕別。 */
-export type SceneRow = { kind: string; seconds: number; label: string }
+/**
+ * 分鏡表裡的一幕，面板只需要這幾個欄位。kind 是鏡頭模板的中文名稱（用模板時）或幕別。
+ * beats：用鏡頭模板、沒寫死 seconds 時的拍數（面板的 − ＋ 一次改一拍）；其他情況是 null，− ＋ 改 seconds。
+ */
+/** fixedText：卡上的字是鏡頭對準的網頁上的字（操作示範），不能在面板改字 */
+export type SceneRow = { kind: string; seconds: number; label: string; beats?: number | null; fixedText?: boolean }
 
 /** 分鏡自動檢查的提醒（frames.mjs 寫的 frames/lint.json）；row 是第幾幕（0 起算），null 是整支影片。 */
 export type LintNote = { row: number | null; message: string }
+
+/** 生成式剪法（招牌片）的一拍：signature.mjs beats 寫的 beats/beats.json。file 是原尺寸 PNG，thumb 是給 VS Code 面板的小 JPEG。 */
+export type BeatRow = { beat: number; at: number; file: string; thumb?: string }
 
 export type Run = {
   /** 這次是否在跑 /make-demo-video；沒在跑時面板只顯示提示。 */
@@ -19,10 +26,12 @@ export type Run = {
   /** 輸出資料夾（相對於工作目錄或絕對路徑），從 Claude 的工具呼叫裡認出來。 */
   out: string | null
   script: string[]
-  /** Claude 呼叫了 show_options，正在等使用者在面板上選。 */
+  /** Claude 呼叫了 show_options，正在等使用者在面板上選剪法與設定。 */
   isPicking: boolean
-  /** Claude 建議的風格 id，面板上會標「推薦」。 */
+  /** Claude 依素材推薦的剪法 id，第一個是預設選取，面板上會標「推薦」。 */
   suggested: string[]
+  /** Claude 推薦第一個剪法的理由（要寫到這次的素材），顯示在剪法卡下方。 */
+  reason: string | null
   choice: Choice
   isChosen: boolean
   scenes: SceneRow[]
@@ -40,8 +49,21 @@ export type Run = {
   isFraming: boolean
   /** 分鏡自動檢查的提醒，顯示在對應的分鏡卡上。 */
   lint: LintNote[]
-  /** 分鏡卡下方打開的輸入框：在第 index 幕後插一句、重畫第 index 幕，或改第 index 句的字。 */
-  openInput: { kind: 'insert' | 'redo' | 'edit'; index: number } | null
+  /** 分鏡卡下方打開的輸入框：在第 index 幕後插一句、重畫第 index 幕、改第 index 句的字，或（招牌片）改第 index 拍。 */
+  openInput: { kind: 'insert' | 'redo' | 'edit' | 'beat'; index: number } | null
+  /** 生成式剪法：Claude 呼叫 show_concepts 給的概念，等使用者在面板上挑一個。 */
+  concepts: string[]
+  isConceptPicking: boolean
+  /** 使用者挑定的概念（或「你來決定」）。 */
+  concept: string | null
+  /** 生成式剪法的逐拍分鏡板：signature.mjs beats 跑完後讀進來。 */
+  beats: BeatRow[]
+  /** 逐拍縮圖最後產生的時間；也當作圖片的 generation。 */
+  beatsAt: number | null
+  /** signature.mjs beats 的自動檢查結果（空的就是通過）。 */
+  beatProblems: string[]
+  /** 分鏡縮圖產生失敗的原因；下次成功時清掉。 */
+  framesNote: string | null
   /** 按「重新選」時的原設定；確定後拿來比對改了哪些項目。 */
   pickedFrom: Choice | null
 }

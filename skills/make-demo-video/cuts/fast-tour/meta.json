@@ -1,0 +1,25 @@
+{
+  "id": "fast-tour",
+  "version": 1,
+  "name": "快節奏導覽",
+  "description": "標語開場、手機在網站上捲到每句話的證據、作品卡快切、重點色收尾；素材有數字或明確的使用情境時，可以加數字跳動與問句快切。一拍 0.4 秒，平均一幕 1–2 秒。",
+  "suits": "有網站可以截圖的產品、作品集、個人網站；放 README 的 12–20 秒動圖",
+  "needs": "網站（手機版整頁長圖）",
+  "defaults": {
+    "aspect": "16:9",
+    "seconds": 15,
+    "beat": 0.4
+  },
+  "shots": [
+    "hook",
+    "intro",
+    "card",
+    "stat",
+    "toggle",
+    "feature",
+    "content",
+    "cta",
+    "outro"
+  ],
+  "credit": "照 2026-09-25 的參考影片拆解節奏與鏡頭（examples/muchuan-reference/shots.md）"
+}

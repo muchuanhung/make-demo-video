@@ -1,6 +1,8 @@
 // 鏡頭模板（shot）：分鏡表的每一幕挑一個模板、填內容，這裡把它展開成播放器看得懂的低階分鏡。
 // 模板包好了文字效果、底色、轉場、手機怎麼捲，Claude 只要選模板、寫字、指定錨點，品質才穩。
 // 也負責自動檢查（lintShots）：可讀時間、相鄰兩幕太像、畫面沒對上這句話、節奏太慢。
+// 操作示範剪法的八個模板在 walkthrough.mjs（展開成 page 幕，檢查在 camera.mjs）。
+import { WALK_SHOTS, expandWalk } from "./walkthrough.mjs";
 
 /** 跟 player.js 一致的時間常數（秒）。改這裡要一起改播放器。 */
 export const TIMING = {
@@ -10,7 +12,10 @@ export const TIMING = {
   pill: 0.15,
   kicker: 0.08,
   animDelay: { zoom: 0.18, blur: 0.12 }, // 這兩種轉場先讓前一幕走，新一幕的動畫晚一點開始
-  readable: 0.5, // 標題完整出現後至少要停的秒數
+  readable: 0.5, // 標題完整出現後至少要停的秒數（字少時）
+  readPerUnit: 0.06, // 字多時：每個字（英文、數字一個詞算一個）完整出現後要停的秒數，12 字約 0.72 秒（參考影片 9 字停 0.56 秒）
+  extraWeight: 0.5, // 小標、標籤、膠囊是輔助資訊，閱讀量算一半
+  stat: { numAt: 0.1, count: 0.9, labelAt: 0.35 }, // stat：數字從 numAt 開始跳、跳 count 秒；說明那行 labelAt 進場
 };
 
 export const SHOTS = {
@@ -22,10 +27,23 @@ export const SHOTS = {
   content: { label: "內容頁", beats: 4, kind: "phone", tone: "invert", fx: "rise", layout: "left", needs: ["image"] },
   cta: { label: "號召行動", beats: 3, kind: "phone", tone: "base", fx: "rise", layout: "big", needs: ["image"] },
   outro: { label: "結尾", beats: 5, kind: "outro", tone: "accent", fx: "blur" },
+  stat: { label: "數字", beats: 4, kind: "stat", tone: "invert", fx: "rise", needs: ["value"] },
+  ...WALK_SHOTS,
 };
 const PHONE_SHOTS = new Set(["intro", "toggle", "feature", "content", "cta"]);
 // 這些鏡頭的字要在截圖上找得到（畫面證明這句話）；toggle 的證據是切換本身，不用對字。
 const LINKED_SHOTS = new Set(["intro", "feature", "content", "cta"]);
+
+/**
+ * 拆解 stat 的數字（例如 "1,534"、"6,000+"、"96.8%"、"$1.2M"）：前綴、數值、小數位、千分位、後綴。
+ * 播放器照這個格式逐格畫出跳動中的數字，最後一格一定等於原本的字。看不懂時回傳 null。
+ */
+export function parseStat(value) {
+  const m = String(value ?? "").trim().match(/^([^\d]*?)(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?([^\d]*)$/);
+  if (!m) return null;
+  const [, prefix, int, dec = "", suffix] = m;
+  return { prefix, to: Number(int.replace(/,/g, "") + (dec ? "." + dec : "")), decimals: dec.length, group: int.includes(","), suffix };
+}
 
 // 比對用：拿掉空白、標點、**粗體** 記號，英文轉小寫。
 const norm = (text) => String(text ?? "").replace(/\*\*/g, "").replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase();
@@ -53,6 +71,20 @@ const round = (x) => Math.round(x * 1000) / 1000;
 const nudge = (p, d) => (p.a != null ? { a: round(p.a + d) } : { y: round((p.y ?? 0) + d) });
 const lineCount = (text) => String(text ?? "").split("\n").length;
 
+const CJK = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]/g;
+/** 閱讀量：中日文一個字算一個，英文、數字一個詞算一個；**粗體**記號與標點不算。 */
+export function readingUnits(...texts) {
+  const s = texts.flat().filter(Boolean).join(" ").replace(/\*\*/g, "");
+  const cjk = (s.match(CJK) || []).length;
+  const words = (s.replace(CJK, " ").match(/[A-Za-z0-9][A-Za-z0-9.,'%+$-]*/g) || []).length;
+  return cjk + words;
+}
+
+/** 標題完整出現後要停多久才讀得完（秒）。 */
+export function holdNeeded(units) {
+  return Math.round(Math.max(TIMING.readable, units * TIMING.readPerUnit) * 100) / 100;
+}
+
 function defaultTransition(shot, prevShot, index) {
   if (index === 0) return "cut";
   if (prevShot === "hook") return "push";
@@ -67,6 +99,10 @@ function textFullIn(scene, fx, transition) {
   if (!scene.heading) return null;
   const delay = TIMING.animDelay[transition] || 0;
   let at;
+  if (scene.kind === "stat") {
+    const t = TIMING.stat;
+    return delay + Math.max(t.numAt + t.count, t.labelAt + (TIMING.headDur[fx] ?? 0.4));
+  }
   if (scene.kind === "title" || scene.kind === "outro") at = TIMING.copyAt.title;
   else {
     at = scene.kind === "card" ? TIMING.copyAt.card : TIMING.copyAt.phone;
@@ -108,9 +144,18 @@ export function expandShots(board, { anchorsOf = () => null } = {}) {
       return;
     }
     for (const need of def.needs || []) if (!s[need]) problems.push(`${where}：少了 ${need}`);
-    if (!s.heading) problems.push(`${where}：少了 heading（這一句腳本）`);
+    if (!s.heading && !def.walk) problems.push(`${where}：少了 heading（這一句腳本）`);
 
     const seconds = round(s.seconds ?? (s.beats ?? def.beats) * beat);
+    if (def.walk) {
+      // 操作示範：畫面上的字幾乎都是網頁自己的字，只有 home、dock 有 heading
+      const out = expandWalk(s, { seconds, beat, prev: raw[i - 1], row: i, say: (m) => problems.push(`${where}：${m}`) });
+      scenes.push(...out);
+      rows.push({ start, seconds, shot: s.shot, heading: s.heading || "", image: s.image, walk: true });
+      start = round(start + seconds);
+      prevCardTone = null;
+      return;
+    }
     const prevShot = raw[i - 1]?.shot || null;
     const transition = s.transition || defaultTransition(s.shot, prevShot, i);
     const fx = s.textFx || def.fx;
@@ -139,7 +184,7 @@ export function expandShots(board, { anchorsOf = () => null } = {}) {
 
     const common = {
       heading: s.heading, kicker: s.kicker, sub: s.sub, pill: s.pill, tags: s.tags, caption: s.caption,
-      textFx: fx, layout, row: i, shot: s.shot,
+      textFx: fx, layout, phoneScale: s.phoneScale, row: i, shot: s.shot,
     };
     for (const k of Object.keys(common)) if (common[k] === undefined) delete common[k];
 
@@ -149,7 +194,12 @@ export function expandShots(board, { anchorsOf = () => null } = {}) {
     const top = { y: 0 };
 
     let out;
-    if (s.shot === "hook") {
+    if (s.shot === "stat") {
+      const count = parseStat(s.value);
+      if (s.value != null && !count) problems.push(`${where}：value「${s.value}」看不懂，寫成數字加前後綴，例如 1,534、6,000+、96.8%`);
+      const from = Number(s.start ?? 0);
+      out = [{ kind: "stat", seconds, tone, transition, ...common, value: String(s.value ?? ""), count: count && { ...count, from: Number.isFinite(from) ? from : 0 } }];
+    } else if (s.shot === "hook") {
       out = [{ kind: "title", seconds, tone, transition, ...common, align: s.align }];
     } else if (s.shot === "outro") {
       out = [{
@@ -201,6 +251,7 @@ export function expandShots(board, { anchorsOf = () => null } = {}) {
       start, seconds, shot: s.shot, heading: s.heading, image: s.image, layout, tone,
       endAt: lastKey ? lastKey.a ?? lastKey.y ?? null : null,
       phone: PHONE_SHOTS.has(s.shot), linked, fullIn: textFullIn(out[0], fx, transition),
+      units: readingUnits(s.heading), extraUnits: readingUnits(s.kicker, s.pill, s.tags || []),
     });
     start = round(start + seconds);
   });
@@ -209,16 +260,37 @@ export function expandShots(board, { anchorsOf = () => null } = {}) {
 }
 
 /** 自動檢查：回傳 [{ row: 第幾句（0 起算，null＝整支影片）, message }]。 */
-export function lintShots({ rows }) {
+export function lintShots({ rows, beat = 0.4 }) {
   const out = [];
   const say = (row, message) => out.push({ row, message });
   const name = (i) => `第 ${i + 1} 幕`;
   let toneRun = 0;
   rows.forEach((r, i) => {
+    // 操作示範的鏡頭不套快節奏的規則（一個鏡頭最長 3 秒、平均 1–1.8 秒）；它的檢查在 camera.mjs。
+    // 只檢查 burst 有沒有落在拍點上：配樂的 drop 落在它的第一拍，不在拍點上就跟大鼓對不齊
+    if (r.walk) {
+      const k = r.start / beat;
+      if (r.shot === "burst" && Math.abs(k - Math.round(k)) > 1e-3) {
+        say(i, `${name(i)}：重拍從 ${r.start} 秒開始，不在拍點上（一拍 ${beat} 秒），配樂的重拍會對不齊；前面幾幕改用 beats 而不是 seconds`);
+      }
+      return;
+    }
     const prev = rows[i - 1];
     if (r.fullIn != null) {
+      // 停多久照字數算：字越多停越久；小標、標籤算一半
       const left = round(r.seconds - r.fullIn);
-      if (left < TIMING.readable) say(i, `${name(i)}：標題完整出現後只停 ${Math.max(0, left).toFixed(2)} 秒，至少要 ${TIMING.readable} 秒；加一拍（beats +1）或縮短標題`);
+      const units = (r.units ?? 0) + (r.extraUnits ?? 0) * TIMING.extraWeight;
+      const need = holdNeeded(units);
+      if (left < need - 1e-6) {
+        const add = Math.max(1, Math.ceil((need - left) / beat - 1e-6));
+        const what = r.extraUnits ? `${r.units} 個字加上小標、標籤` : `${r.units} 個字`;
+        say(i, `${name(i)}：標題完整出現後只停 ${Math.max(0, left).toFixed(2)} 秒，${units > TIMING.readable / TIMING.readPerUnit ? `${what}要停 ${need.toFixed(2)} 秒才讀得完` : `至少要 ${need} 秒`}；加 ${add} 拍（beats +${add}）或刪字`);
+      }
+    }
+    // 一幕只講一件事：字太多就算停得夠久，快節奏也消化不了
+    if (r.shot && r.shot !== "outro") {
+      if (r.units > 16) say(i, `${name(i)}：標題 ${r.units} 個字，快節奏一眼讀不完；縮到 12 字以內，或拆成兩幕`);
+      else if (r.units + r.extraUnits > 16) say(i, `${name(i)}：這一幕字太多（標題 ${r.units} 個字，小標、標籤 ${r.extraUnits} 個），一幕只講一件事；刪掉小標或標籤，或拆成兩幕`);
     }
     // 單頁網站用同一張長圖、捲到不同段落是正常的；捲到的位置也差不多時才算重複
     if (r.phone && prev?.phone && r.image === prev.image && r.layout === prev.layout && (r.endAt == null || prev.endAt == null || Math.abs(r.endAt - prev.endAt) < 0.08)) {
@@ -234,10 +306,10 @@ export function lintShots({ rows }) {
     toneRun = prev && prev.tone && prev.tone === r.tone ? toneRun + 1 : 1;
     if (r.tone && toneRun > 3) say(i, `${name(i)}：連續 ${toneRun} 幕都是 ${r.tone} 底色，換一個 tone 讓節奏有起伏`);
   });
-  const shots = rows.filter((r) => r.shot);
+  const shots = rows.filter((r) => r.shot && !r.walk);
   if (shots.length) {
     const avg = shots.reduce((sum, r) => sum + r.seconds, 0) / shots.length;
-    if (avg > 1.6) say(null, `平均一個鏡頭 ${avg.toFixed(1)} 秒，太慢；快節奏平均 1–1.5 秒（減少拍數，或在 ② 選短一點的秒數）`);
+    if (avg > 1.8) say(null, `平均一個鏡頭 ${avg.toFixed(1)} 秒，太慢；快節奏平均 1–1.8 秒（刪字讓每幕短一點、減少拍數，或在 ① 選短一點的秒數）`);
   }
   return out;
 }

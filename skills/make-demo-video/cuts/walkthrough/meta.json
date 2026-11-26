@@ -1,0 +1,24 @@
+{
+  "id": "walkthrough",
+  "version": 1,
+  "name": "操作示範",
+  "description": "網頁鋪滿畫面，一台攝影機帶著游標走一遍：結果先上、找到、點下去、推近看細節，網址收尾。幾乎不剪接，只在配樂重拍時硬切一次。一拍 0.5 秒。",
+  "suits": "有操作流程的網站或工具（搜尋、切換、一鍵複製）；示範「怎麼用」的 20–25 秒影片",
+  "needs": "網站（桌機版，操作路徑每一步一張截圖）",
+  "defaults": {
+    "aspect": "16:9",
+    "seconds": 22,
+    "beat": 0.5
+  },
+  "shots": [
+    "reveal",
+    "home",
+    "seek",
+    "burst",
+    "click",
+    "expand",
+    "focus",
+    "dock"
+  ],
+  "credit": "節奏與運鏡結構參考 prompt-motion.com/antonio-kodheli-490109（Prompt Motion site promo，@antonio_kodheli）；規則為本專案自行拆解改寫，未使用原提示詞"
+}

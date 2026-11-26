@@ -1,0 +1,155 @@
+<!doctype html>
+<!--
+  招牌片骨架：複製成 <out>/reel.html，只改「SIGNATURE」「元素」「seek」三段；工具函式照用。
+  規則看 cut.md。每一格都只由 t 決定：seek(t) 每次把所有元素的樣式重算一遍，不用 CSS 動畫、計時器、亂數。
+-->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>signature</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- 一套字型：換成素材的字型（Google Fonts，要有繁中字） -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700;900&display=block">
+<style>
+  html, body { margin: 0; background: #000; }
+  #stage { position: relative; overflow: hidden; font-family: "Noto Sans TC", "PingFang TC", sans-serif; }
+  .abs { position: absolute; left: 0; top: 0; }
+  .t { position: absolute; left: 0; top: 0; white-space: nowrap; line-height: 1; font-weight: 900; letter-spacing: -0.02em; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<svg width="0" height="0" style="position:absolute"><defs id="defs"></defs></svg>
+<script>
+// ===== SIGNATURE：給 signature.mjs 檢查用（必填） =====
+// lines：關鍵句（答案、數字、片尾）完整出現到開始離開的時間；text 要跟 script.md 的句子一字不差。
+window.SIGNATURE = {
+  concept: "（一行概念）",
+  width: 720, height: 1280, duration: 15, beat: 0.5,
+  lines: [
+    // { text: "打開去哪吃好就知道。", from: 9.2, to: 9.9 },
+  ],
+};
+const { width: W, height: H, duration: DURATION, beat: BEAT } = window.SIGNATURE;
+const CX = W / 2, CY = H / 2;
+const COL = { bg: "#f3efe6", ink: "#141210", accent: "#ec5a12", white: "#ffffff" }; // 最多三色加黑白，取自素材
+
+// ===== 工具函式（照用） =====
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const P = (t, at, dur) => clamp((t - at) / dur);            // t 在 [at, at+dur] 的進度 0–1
+const lerp = (a, b, k) => a + (b - a) * k;
+const eo = (x) => (x >= 1 ? 1 : 1 - Math.pow(2, -10 * x));   // 指數減速
+const ei = (x) => (x <= 0 ? 0 : Math.pow(2, 10 * x - 10));   // 指數加速
+const eio = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x < 0.5 ? Math.pow(2, 20 * x - 10) / 2 : (2 - Math.pow(2, -20 * x + 10)) / 2);
+const spring = (sec, w = 14) => (sec <= 0 ? 0 : 1 - (1 + w * sec) * Math.exp(-w * sec)); // 臨界阻尼，不回彈
+function rng(seed) { return () => { seed = (seed + 0x6d2b79f5) | 0; let r = Math.imul(seed ^ (seed >>> 15), 1 | seed); r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r; return ((r ^ (r >>> 14)) >>> 0) / 4294967296; }; }
+
+// 形狀變形：任何形狀都取樣成 N 個點，同點數才能互相 mix
+const N = 160;
+function resample(poly) {
+  const pts = [...poly, poly[0]], seg = [0];
+  for (let i = 1; i < pts.length; i++) seg.push(seg[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const L = seg[seg.length - 1] || 1, out = new Float64Array(N * 2);
+  let j = 1;
+  for (let i = 0; i < N; i++) {
+    const d = (L * i) / N;
+    while (j < seg.length - 1 && seg[j] < d) j++;
+    const k = (d - seg[j - 1]) / ((seg[j] - seg[j - 1]) || 1);
+    out[i * 2] = lerp(pts[j - 1][0], pts[j][0], k); out[i * 2 + 1] = lerp(pts[j - 1][1], pts[j][1], k);
+  }
+  return out;
+}
+function arc(cx, cy, r, a0, a1, n = 48) { const o = []; for (let i = 0; i <= n; i++) { const a = lerp(a0, a1, i / n); o.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); } return o; }
+const circle = (cx, cy, r) => resample(arc(cx, cy, r, -Math.PI / 2, Math.PI * 1.5, 120).slice(0, -1));
+function roundRect(cx, cy, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  const l = cx - w / 2, rt = cx + w / 2, tp = cy - h / 2, bt = cy + h / 2;
+  return resample([[cx, tp], ...arc(rt - r, tp + r, r, -Math.PI / 2, 0, 12), ...arc(rt - r, bt - r, r, 0, Math.PI / 2, 12), ...arc(l + r, bt - r, r, Math.PI / 2, Math.PI, 12), ...arc(l + r, tp + r, r, Math.PI, Math.PI * 1.5, 12)]);
+}
+const mix = (a, b, k) => { const o = new Float64Array(a.length); for (let i = 0; i < a.length; i++) o[i] = a[i] + (b[i] - a[i]) * k; return o; };
+function toPath(p) { let d = "M" + p[0].toFixed(1) + " " + p[1].toFixed(1); for (let i = 1; i < N; i++) d += "L" + p[i * 2].toFixed(1) + " " + p[i * 2 + 1].toFixed(1); return d + "Z"; }
+// 依序套用關鍵格：[{ at, dur, ease, to }]
+function chain(start, kfs, t) { let cur = start; for (const k of kfs) { if (t >= k.at + k.dur) { cur = k.to; continue; } if (t > k.at) cur = mix(cur, k.to, k.ease(P(t, k.at, k.dur))); break; } return cur; }
+
+// 元素與動態模糊：pose(t) 回傳 null＝這格不出現；{ x, y, sx, sy, color, text, clip, size }
+const stage = document.getElementById("stage");
+Object.assign(stage.style, { width: W + "px", height: H + "px" });
+const defs = document.getElementById("defs");
+const SVGNS = "http://www.w3.org/2000/svg";
+function el(parent, css = {}, html = "", cls = "abs") { const e = document.createElement("div"); e.className = cls; Object.assign(e.style, css); if (html) e.innerHTML = html; parent.appendChild(e); return e; }
+const text = (parent, s, size, color, weight = 900) => el(parent, { fontSize: size + "px", color, fontWeight: weight }, s, "t");
+let fid = 0;
+function blurFilter() {
+  const f = document.createElementNS(SVGNS, "filter"), id = "mb" + fid++;
+  f.setAttribute("id", id); f.setAttribute("x", "-50%"); f.setAttribute("y", "-50%"); f.setAttribute("width", "200%"); f.setAttribute("height", "200%");
+  const g = document.createElementNS(SVGNS, "feGaussianBlur"); g.setAttribute("stdDeviation", "0 0"); f.appendChild(g); defs.appendChild(f);
+  return { id, g };
+}
+// 模糊跟著速度與方向
+function setBlur(e, f, vx, vy, extra = 0) {
+  const bx = Math.min(30, Math.abs(vx) / 240 * 0.9 + extra), by = Math.min(30, Math.abs(vy) / 240 * 0.9 + extra);
+  if (bx + by < 0.35) { e.style.filter = "none"; return; }
+  f.g.setAttribute("stdDeviation", bx.toFixed(2) + " " + by.toFixed(2)); e.style.filter = `url(#${f.id})`;
+}
+const actors = [];
+function actor(e, pose) { const a = { e, pose, f: blurFilter() }; actors.push(a); return a; }
+function drawActor(a, t) {
+  const p = a.pose(t);
+  if (!p) { a.e.style.display = "none"; return; }
+  a.e.style.display = "";
+  const { x = 0, y = 0, sx = 1, sy = 1 } = p;
+  a.e.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%) scale(${sx},${sy})`;
+  if (p.color) a.e.style.color = p.color;
+  if (p.text != null) a.e.textContent = p.text;
+  a.e.style.clipPath = p.clip || "none";
+  const q = a.pose(t - 1 / 240) || p;
+  const ds = Math.max(Math.abs(sx - (q.sx ?? 1)), Math.abs(sy - (q.sy ?? 1))) * 240;
+  setBlur(a.e, a.f, (x - (q.x ?? x)) * 240, (y - (q.y ?? y)) * 240, Math.min(20, ds * 0.08 * (p.size || 100) / 100));
+}
+const show = (e, on) => { e.style.display = on ? "" : "none"; };
+
+// ===== 元素（照概念寫） =====
+const bg = el(stage, { width: W + "px", height: H + "px" });
+// const word = actor(text(stage, "去哪", 200, COL.ink), (t) => t < 0.5 ? null : { x: CX, y: lerp(H + 200, CY, eo(P(t, 0.5, 0.3))), size: 200 });
+
+// ===== seek（照概念寫） =====
+function seek(t) {
+  t = clamp(t, 0, DURATION);
+  bg.style.background = COL.bg;
+  for (const a of actors) drawActor(a, t);
+}
+window.seek = seek;
+
+// ===== 配樂（可改音色與編曲，落點規則看 cut.md） =====
+async function renderAudio() {
+  const sr = 44100, ctx = new OfflineAudioContext(2, sr * DURATION, sr);
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -16; comp.ratio.value = 4;
+  const master = ctx.createGain(); master.gain.value = 0.85; comp.connect(master); master.connect(ctx.destination);
+  const rand = rng(42), noise = ctx.createBuffer(1, sr * 3, sr), nd = noise.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = rand() * 2 - 1;
+  const env = (g, t, peak, decay) => { g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(peak, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + decay); };
+  const kick = (t, amp = 0.95) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(165, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.14); env(g, t, amp, 0.45); o.connect(g).connect(comp); o.start(t); o.stop(t + 0.5); };
+  const noiseHit = (t, type, freq, q, amp, decay) => { const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = noise; f.type = type; f.frequency.value = freq; f.Q.value = q; env(g, t, amp, decay); s.connect(f).connect(g).connect(comp); s.start(t, (t * 0.37) % 2); s.stop(t + decay + 0.05); };
+  const hat = (t) => noiseHit(t, "highpass", 8000, 0.7, 0.12, 0.06);
+  const hit = (t, amp = 0.6) => { noiseHit(t, "bandpass", 1600, 0.6, amp, 0.35); const o = ctx.createOscillator(), g = ctx.createGain(); o.type = "triangle"; o.frequency.setValueAtTime(220, t); o.frequency.exponentialRampToValueAtTime(55, t + 0.3); env(g, t, amp * 0.6, 0.6); o.connect(g).connect(comp); o.start(t); o.stop(t + 0.7); };
+  const riser = (t0, t1) => { const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = noise; s.loop = true; f.type = "bandpass"; f.Q.value = 1.2; f.frequency.setValueAtTime(300, t0); f.frequency.exponentialRampToValueAtTime(6000, t1); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.5, t1); g.gain.linearRampToValueAtTime(0, t1 + 0.02); s.connect(f).connect(g).connect(comp); s.start(t0); s.stop(t1 + 0.05); };
+  const bar = BEAT * 4, bars = DURATION / bar;
+  for (let b = 0; b < DURATION / BEAT; b++) { kick(b * BEAT); if (b * BEAT >= bar) hat(b * BEAT + BEAT / 2); }
+  for (let k = 1; k < bars; k++) hit(k * bar);                          // 每小節（換場）一記重拍
+  riser(Math.max(0, (Math.floor(bars) - 2) * bar), (Math.floor(bars) - 1) * bar); // 上升音爬進最後一整小節，在它的第一拍落下
+  const buf = await ctx.startRendering(), L = buf.getChannelData(0), R = buf.getChannelData(1);
+  const pcm = new Int16Array(L.length * 2);
+  for (let i = 0; i < L.length; i++) { pcm[i * 2] = clamp(L[i], -1, 1) * 32767; pcm[i * 2 + 1] = clamp(R[i], -1, 1) * 32767; }
+  let bin = ""; const bytes = new Uint8Array(pcm.buffer);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return { sampleRate: sr, data: btoa(bin) };
+}
+window.renderAudio = renderAudio;
+
+// 字型載入後才算圖；load() 的字串放片子裡會出現的字
+window.ready = false;
+document.fonts.load('900 100px "Noto Sans TC"', "（片子裡的字）").catch(() => {}).then(() => document.fonts.ready).then(() => { seek(0); window.ready = true; });
+</script>
+</body>
+</html>

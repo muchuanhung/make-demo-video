@@ -1,0 +1,17 @@
+{
+  "id": "muchuan-dark",
+  "name": "作品集深色",
+  "description": "取自 muchuan-portfolio 的深色模式：近黑底、米白粗字、亮橘重點。",
+  "colors": { "bg": "#12100e", "surface": "#1c1a18", "text": "#f4f1ea", "muted": "#a39c92", "accent": "#ff7a1f", "accentText": "#11100f", "accentInk": "#ff7a1f", "border": "#3a3632" },
+  "fonts": {
+    "display": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "body": "\"PingFang TC\", \"Noto Sans TC\", \"Microsoft JhengHei\", system-ui, sans-serif",
+    "mono": "\"SF Mono\", Menlo, Consolas, \"PingFang TC\", monospace"
+  },
+  "radius": 22,
+  "shadow": "none",
+  "motion": { "enter": "rise", "duration": 0.45, "transition": "fade" },
+  "decor": "none",
+  "caption": "plain",
+  "progress": false
+}

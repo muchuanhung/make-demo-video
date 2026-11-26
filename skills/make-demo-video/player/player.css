@@ -299,7 +299,7 @@ body[data-portrait] .scene.is-phone .copy { margin-bottom: 0; }
 
 .phone {
   position: relative;
-  height: calc(var(--h) * 0.9);
+  height: calc(var(--h) * 0.9 * var(--phone-scale, 1));
   aspect-ratio: 9 / 19.5;
   padding: 0.55rem;
   border-radius: 3rem;
@@ -357,7 +357,7 @@ body[data-portrait] .split .device { align-self: center; }
 body[data-portrait] .scene.split.card-center { justify-content: center; padding-top: 3rem; }
 .split.card-center .copy { flex: none; align-items: center; }
 .split.card-center .copy :is(h1, .sub, .kicker) { text-align: center; }
-body[data-portrait] .phone { height: calc(var(--h) * 0.66); }
+body[data-portrait] .phone { height: calc(var(--h) * 0.66 * var(--phone-scale, 1)); }
 body[data-portrait] .pcard { width: calc(var(--w) - 4.8rem); }
 body[data-portrait] .split .copy h1 { font-size: 5rem; }
 body[data-portrait][data-align="left"] h1 { font-size: 6.4rem; }
@@ -391,9 +391,49 @@ body[data-decor="halo"] .scene {
 /* ---- 手機鏡頭的版面：right（預設，字在左、手機在右）、left（手機在左）、big（手機放大、下緣出畫面，像特寫） ---- */
 .scene.split.lay-left { flex-direction: row-reverse; }
 .scene.split.lay-big .device { position: absolute; right: 7%; top: 14%; }
-.scene.split.lay-big .phone { height: calc(var(--h) * 1.2); }
+.scene.split.lay-big .phone { height: calc(var(--h) * 1.2 * var(--phone-scale, 1)); }
 .scene.split.lay-big .copy { max-width: 55%; }
 body[data-portrait] .scene.split.lay-left { flex-direction: column-reverse; justify-content: flex-end; }
 body[data-portrait] .scene.split.lay-big .device { position: relative; right: auto; top: auto; margin-top: 1rem; }
-body[data-portrait] .scene.split.lay-big .phone { height: calc(var(--h) * 0.86); }
+body[data-portrait] .scene.split.lay-big .phone { height: calc(var(--h) * 0.86 * var(--phone-scale, 1)); }
 body[data-portrait] .scene.split.lay-big .copy { max-width: none; }
+
+/* ---- stat：跳動的大數字＋一條跟著長出來的線＋說明 ---- */
+.scene.is-stat .num {
+  font-family: var(--font-display);
+  font-size: 9rem;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-ink);
+  white-space: nowrap;
+}
+.scene.is-stat .rule { width: 60%; height: 0.35rem; background: var(--accent-ink); border-radius: 1rem; scale: 0 1; transform-origin: left center; margin: 1.2rem 0 1rem; }
+body:not([data-align="left"]) .scene.is-stat .rule { transform-origin: center; }
+.scene.is-stat[data-tone="accent"] .num { color: var(--text); }
+body[data-portrait] .scene.is-stat .num { font-size: 7.5rem; }
+body[data-align="left"] .scene.is-stat .num { font-size: 11rem; }
+body[data-portrait][data-align="left"] .scene.is-stat .num { font-size: 8.5rem; }
+body[data-align="left"] .scene.is-stat h2 { font-size: 3rem; font-weight: 900; }
+
+/* page：網頁截圖鋪滿畫面，攝影機用 transform 移動（player.js 的 applyPage） */
+.scene.is-page { padding: 0; overflow: hidden; background: var(--bg); }
+.scene.is-page > img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; }
+.pg-cursor { position: absolute; width: 2.1rem; height: 2.1rem; margin: -0.22rem 0 0 -0.26rem; z-index: 3; transform-origin: 12% 10%; pointer-events: none; }
+.pg-cursor svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.pg-cursor path { fill: #111; stroke: #fff; stroke-width: 1.6; stroke-linejoin: round; }
+/* 點擊光圈：唯一用到重點色的地方之一（互動才用重點色） */
+.pg-ring { position: absolute; width: 4rem; height: 4rem; margin: -2rem 0 0 -2rem; border-radius: 50%; border: 0.25rem solid var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); opacity: 0; z-index: 2; pointer-events: none; }
+/* 螢光筆：重點色、相乘混色（底下的字看得清楚）；也是只在互動時才出現的重點色 */
+.pg-mark { position: absolute; z-index: 1; border-radius: 0.2rem; background: color-mix(in srgb, var(--accent) 55%, transparent); mix-blend-mode: multiply; pointer-events: none; }
+.pg-mark.under { background: var(--accent); mix-blend-mode: normal; border-radius: 99px; }
+/* 按按鈕：從按了之後的截圖剪一塊蓋上去 */
+.pg-swap { position: absolute; z-index: 1; overflow: hidden; opacity: 0; pointer-events: none; }
+.pg-swap > img { position: absolute; max-width: none; }
+/* page 幕的字（操作示範的產品名、標語前半）：左下角的大字，底下墊一塊跟網站同色的卡、1px 細線，蓋在網頁上也讀得清楚 */
+.scene.is-page .caption { left: 3rem; right: auto; bottom: 3rem; width: auto; text-align: left; padding: 0; z-index: 2; }
+.scene.is-page .caption span { font: 700 2.8rem/1.15 var(--font-display); letter-spacing: -0.01em; padding: 0.7rem 1.3rem; border-radius: 0.6rem; background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+/* 網址膠囊：網址前一個重點色的點（互動才用重點色）；pg-pill 是從按鈕長成網址的那一個 */
+.url.dot::before { content: ""; display: inline-block; width: 0.55em; height: 0.55em; margin-right: 0.55em; border-radius: 50%; background: var(--accent); vertical-align: 0.05em; }
+.pg-pill { position: absolute; z-index: 5; display: none; box-sizing: border-box; overflow: hidden; white-space: nowrap; display: flex; align-items: center; justify-content: center; margin: 0; }

@@ -2,6 +2,7 @@
 // 分鏡板的縮圖：每一幕各截一格，不算整支影片，幾秒就好。進度面板在分鏡表改動後會自己跑這支。
 // 用法：node frames.mjs --storyboard <storyboard.json> --style <id 或風格檔> [--out <資料夾>]
 // 輸出 <out>/scene-1.png … scene-N.png（預設 <分鏡表所在資料夾>/frames），多出來的舊檔會刪掉。
+// 另外各存一份 scene-N.jpg：VS Code 面板沒有 Image，縮圖要包成 base64 塞進面板，面板輸出上限 256KB，PNG 幾張就超過。
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs, loadStyle, loadStoryboard, launchBrowser, buildPlayer, formatWarnings } from "./lib.mjs";
@@ -16,7 +17,18 @@ const outDir = path.resolve(args.out || path.join(path.dirname(args.storyboard),
 // 縮圖寬 320（直式 180），用縮小的裝置像素比直接截，不必另外縮圖。
 const SCALE = 0.25;
 
-const [board, style] = await Promise.all([loadStoryboard(args.storyboard), loadStyle(args.style)]);
+// 面板連按時，分鏡表可能剛好寫到一半（讀到空檔或半個 JSON）：稍等再讀，最多 5 次
+async function loadSettled(file) {
+  for (let i = 0; ; i++) {
+    try {
+      return await loadStoryboard(file);
+    } catch (err) {
+      if (!(err instanceof SyntaxError) || i >= 4) throw err;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+  }
+}
+const [board, style] = await Promise.all([loadSettled(args.storyboard), loadStyle(args.style)]);
 await mkdir(outDir, { recursive: true });
 const playerFile = path.join(outDir, "frames.player.html");
 await writeFile(playerFile, await buildPlayer(board, style));
@@ -32,6 +44,7 @@ try {
     const t = row.start + Math.min(row.seconds * 0.75, row.seconds - 0.3);
     await page.evaluate((x) => window.seek(x), t);
     await page.screenshot({ path: path.join(outDir, `scene-${i + 1}.png`) });
+    await page.screenshot({ path: path.join(outDir, `scene-${i + 1}.jpg`), type: "jpeg", quality: 60 });
   }
 } finally {
   await browser.close();
@@ -40,7 +53,7 @@ try {
 
 // 刪掉幕數變少後留下的舊縮圖
 for (const name of await readdir(outDir)) {
-  const n = Number(name.match(/^scene-(\d+)\.png$/)?.[1]);
+  const n = Number(name.match(/^scene-(\d+)\.(?:png|jpg)$/)?.[1]);
   if (n > board.rows.length) await rm(path.join(outDir, name), { force: true });
 }
 // 自動檢查的結果給面板顯示在分鏡卡上

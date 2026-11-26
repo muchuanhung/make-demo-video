@@ -1,0 +1,11 @@
+{
+  "title": "fast-tour 縮圖",
+  "cut": "fast-tour",
+  "aspect": "16:9",
+  "beat": 0.4,
+  "scenes": [
+    { "shot": "hook", "heading": "**快節奏**\n導覽" },
+    { "shot": "card", "label": "01 / WEB", "icon": "◈", "kicker": "01 / WEB", "heading": "一句一個鏡頭" },
+    { "shot": "outro", "kicker": "fast-tour", "heading": "快節奏導覽", "sub": "標語開場・快切・重點色收尾", "url": "example.com" }
+  ]
+}

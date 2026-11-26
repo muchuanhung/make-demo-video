@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>make-demo-video</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@500;700;900&amp;display=block">
+<style>
+  :root { --bg: #1f1b1a; --surface: #ffffff; --text: #fcfaf7; --muted: #fcfaf7; --border: #fcfaf7; --accent: #e2694a; --accent-text: #1f1b1a; --r: 12px; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 32px 16px; background: var(--bg); color: var(--text); font-family: "Noto Sans TC", "PingFang TC", sans-serif; font-size: 14px; }
+  h1 { margin: 0; font-family: "Noto Sans TC", "PingFang TC", sans-serif; font-weight: 800; line-height: 1.2; }
+  p { margin: 0; line-height: 1.7; }
+  a { color: var(--text); overflow-wrap: anywhere; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .sm { font-size: 12px; }
+  .lg { font-size: 16px; }
+  .strong { font-size: 16px; font-weight: 500; }
+  .stack { display: flex; flex-direction: column; gap: 4px; }
+  .gap-10 { gap: 10px; } .gap-12 { gap: 12px; }
+  .center { text-align: center; }
+  .spread { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; }
+  .player { border-radius: var(--r); overflow: hidden; border: 1px solid var(--border); background: #000; box-shadow: 0 12px 32px rgb(0 0 0 / 10%); }
+  video { display: block; width: 100%; height: 100%; aspect-ratio: 1280 / 720; object-fit: contain; background: #000; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 20px; border-radius: min(var(--r), 12px); background: var(--surface); border: 1px solid var(--border); text-decoration: none; }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .btn:hover { filter: brightness(0.96); }
+  .qr-row { display: flex; align-items: center; gap: 16px; }
+  .qr { flex: none; width: 96px; padding: 8px; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
+  .qr svg { display: block; width: 100%; height: auto; }
+  .credit { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--muted); }
+  .credit .star { min-height: 36px; padding: 0 14px; margin-top: 4px; font-size: 13px; color: var(--text); }
+  .credit b { color: var(--text); }
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+  .swatch { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .dot { width: 20px; height: 20px; border-radius: 6px; border: 1px solid var(--border); }
+
+  main.portrait { max-width: 1100px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 40px; align-items: center; }
+  .portrait .player { flex: 0 1 400px; margin: 0 auto; }
+  .portrait .info { flex: 999 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 24px; }
+  .portrait h1 { font-size: clamp(30px, 5vw, 44px); }
+  .portrait .credit { padding-top: 16px; border-top: 1px solid var(--border); }
+
+  main.landscape { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
+  .landscape h1 { font-size: clamp(22px, 4vw, 28px); }
+  .landscape video { max-height: 80vh; }
+  .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .bottom { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; justify-content: space-between; padding-top: 16px; border-top: 1px solid var(--border); }
+  .bottom .qr { width: 64px; padding: 5px; }
+</style>
+</head>
+<body>
+<main class="landscape">
+  <header class="stack center">
+    <span class="muted">影片做好了</span>
+    <h1>make-demo-video</h1>
+    <span class="muted">招牌片 · 20 秒 · 40 拍 · 1280×720</span>
+  </header>
+  <div class="player"><video src="demo.mp4" autoplay loop muted playsinline controls></video></div>
+  <div class="downloads">
+    <section class="card stack gap-12">
+      <div class="stack"><b class="lg">MP4 影片</b><span class="muted sm">4.1 MB · 1280×720 · 適合社群、簡報、網站</span></div>
+      <a class="btn primary" href="demo.mp4" download>下載 demo.mp4</a>
+    </section>
+    <section class="card stack gap-12">
+      <div class="stack"><b class="lg">GIF 動圖</b><span class="muted sm">4.6 MB · 640 寬 · 放進 README 會自動播放</span></div>
+      <a class="btn" href="demo.gif" download>下載 demo.gif</a>
+    </section>
+  </div>
+  <div class="bottom"><footer class="credit">
+      <span>用 <b>make-demo-video</b> 做的</span>
+      <a href="https://github.com/muchuanhung/make-demo-video">github.com/muchuanhung/make-demo-video</a>
+      <span>有用的話點個星，我會很開心，讓下一個需要的人也找得到</span>
+      <a class="btn star" href="https://github.com/muchuanhung/make-demo-video">⭐ GitHub 點星</a>
+    </footer></div>
+</main>
+</body></html>

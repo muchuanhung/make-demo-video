@@ -5,22 +5,38 @@
 A Claude Code skill + mod: turn your material into a demo video (MP4 + GIF) in minutes.
 
 - **Skill**: `/make-demo-video` reads the material, writes a script, lays out a storyboard, then renders it frame by frame in a browser and joins the frames with ffmpeg.
-- **Mod**: a progress pane next to the chat. Pick a style, see a thumbnail of every scene, adjust the storyboard, and press 合成影片 (Render) when it looks right.
+- **Mod**: a progress pane next to the chat. Pick a cut, see a thumbnail of every scene, adjust the storyboard, and press 合成影片 (Render) when it looks right.
 
-![One /make-demo-video run in VS Code: script, style picked in the pane, storyboard adjusted, video rendered](examples/skill-flow/skill-flow.gif)
+![A 20-second make-demo-video showreel: a play button unfolds into a storyboard, runs through three cuts, redoing a single scene and the 20-second re-render, then folds back into the play button](examples/showreel/demo.gif)
 
-The demo is an HTML reconstruction, not a screen recording: the waits are shortened (a real run takes about a minute to write the script and about 20 seconds to render), and the chat panel is drawn simpler than the real one.
+This showreel was made with the skill's own signature cut; its script, beat sheet and source are in [examples/showreel/](examples/showreel/), and the version with music is [demo.mp4](examples/showreel/demo.mp4). For what a run looks like in the VS Code pane, see [examples/skill-flow/skill-flow.gif](examples/skill-flow/skill-flow.gif).
 
 ### How it works
 
 | Step | What happens | Output |
 |---|---|---|
-| ① Script | Claude analyses text, documents or a URL and writes the script (one line per scene) | `script.md` |
-| ② Style | Pick a built-in style, aspect, length and scene count in the pane, or take colours from the material | `style.json` (custom only) |
+| ① Cut | Claude reads the text, documents or URL and recommends a cut with a reason; pick the cut, aspect, length and scene count in the pane; colours always come from the material | `style.json` |
+| ② Script | Claude writes the script for the chosen cut (one line per scene) | `script.md` |
 | ③ Storyboard | Move, delete, reword or redo single scenes on the board | `storyboard.json` |
 | ④ Render | Render once you confirm | `demo.mp4`, `demo.gif`, result page |
 
-The video is computed from storyboard + style, not recorded: change a caption or swap the style and it re-renders in about 20 seconds; don't like a scene? Have Claude redo just that scene, or pick a different style in the pane.
+The video is computed from the storyboard, not recorded: change a caption and it re-renders in about 20 seconds; don't like a scene? Have Claude redo just that scene, or pick a different cut in the pane.
+
+### Three cuts
+
+A cut decides how the video is edited (script shape, shot order, pacing). Cuts live in `skills/make-demo-video/cuts/`, one folder each. In step ① Claude recommends 1–3 of them for your material, with a reason for the first.
+
+| | Fast tour `fast-tour` | Signature `signature` | Walkthrough `walkthrough` |
+|---|---|---|---|
+| | ![Fast tour](skills/make-demo-video/cuts/fast-tour/thumb.png) | ![Signature](skills/make-demo-video/cuts/signature/thumb.png) | ![Walkthrough](skills/make-demo-video/cuts/walkthrough/thumb.png) |
+| Answers | **What** the product has | **Who** it is | **How** to use it |
+| Looks like | A tagline opener, a phone scrolling the site to the proof for each line, quick-cut cards; counting numbers and question cuts when the material has them | One concept from start to finish, every frame morphing out of the previous one with no hard cuts; music, motion blur, and a last frame that loops back to the first | The web page fills the frame and one camera follows the cursor: result first, find it, click, zoom into the detail, end on the URL; a single hard cut on the music's downbeat |
+| Good for | Products and portfolios with a site to screenshot; README GIFs | Launches, talk openers, brand reels for social | Sites or tools with a clear flow (search, switch, one-click copy) |
+| Material | A website (full-page mobile screenshots) | Product name, tagline, questions users ask; screenshots optional | A website (desktop, one screenshot per step of the flow) |
+| Defaults | 16:9, 15 s, 0.4 s per beat | 9:16, 15 s, 0.5 s per beat | 16:9 only, 22 s, 0.5 s per beat |
+| How it's built | Combines fixed shot templates | Generative: pick a concept in the pane, and Claude writes a fresh `reel.html` each time | Combines fixed shot templates |
+
+Fast tour and walkthrough only combine fixed shot templates, so the same storyboard always renders the same video. Signature gives a different concept and look every run, and takes about 10 minutes and 100,000-plus tokens from reading the material to the finished video; once it's final, caption changes and re-renders edit the same `reel.html`, and each beat-level edit takes 1–3 minutes.
 
 ### Install
 
