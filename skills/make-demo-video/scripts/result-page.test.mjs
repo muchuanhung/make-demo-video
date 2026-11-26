@@ -93,3 +93,18 @@ test("沒有出處（影片介紹的就是這個 repo，或不是以 plugin 安�
   assert.match(resultPage(board(true), studio, rest), /用手機掃描開啟/);
   assert.match(resultPage(board(false), studio, rest), /影片裡介紹的網站/);
 });
+
+test("本機（file://）打開時下載按鈕改成開影片的本機網址，按鈕外觀不變；放到網站上照舊下載", () => {
+  for (const portrait of [true, false]) {
+    const html = resultPage(board(portrait), studio, files);
+    // 網站上：仍是一般的下載連結
+    assert.match(html, /<a class="btn primary" href="demo\.mp4" download>/);
+    // 本機：頁面自己的腳本只在 file: 時接手，把 download 連結改成影片的完整本機網址，不改按鈕外觀
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
+    assert.match(script, /location\.protocol === "file:"/);
+    assert.match(script, /a\[download\]/);
+    assert.match(script, /removeAttribute\("download"\)/);
+    assert.doesNotMatch(script, /style|textContent|createElement/, "不改按鈕外觀");
+    assert.doesNotThrow(() => new Function(script), "腳本要能解析");
+  }
+});

@@ -69,3 +69,14 @@ test("resultLook：結果頁標題是腳本第一句、網址取 extra、顏色�
   assert.equal(resultLook(sig, null, "").style.colors.bg, "#f3efe6");
   assert.equal(resultLook({ ...sig, extra: [] }, null, "").board.url, undefined);
 });
+
+test("resultLook：深底的招牌片沒指定卡片色時，卡片用比底色稍亮的深色，字才看得到", async () => {
+  const { contrast } = await import("./result-page.mjs");
+  const sig = { duration: 20, beat: 0.5, width: 720, height: 1280, concept: "c", extra: [] };
+  const dark = resultLook(sig, { col: { bg: "#1f1b1a", ink: "#fcfaf7", accent: "#e2694a" } }, "").style.colors;
+  assert.notEqual(dark.surface.toLowerCase(), "#ffffff");
+  assert.ok(contrast(dark.text, dark.surface) >= 4.5, `字與卡片對比只有 ${contrast(dark.text, dark.surface).toFixed(2)}`);
+  // 淺底照舊用白卡；有指定 white 時用指定的
+  assert.equal(resultLook(sig, { col: { bg: "#f1efe9", ink: "#0b0b0b" } }, "").style.colors.surface, "#ffffff");
+  assert.equal(resultLook(sig, { col: { bg: "#f1efe9", ink: "#0b0b0b", white: "#f8f6f1" } }, "").style.colors.surface, "#f8f6f1");
+});
