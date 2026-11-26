@@ -80,14 +80,19 @@ export function resultPage(board, style, files) {
   const meta = [escapeHtml(style.name || style.id), `${board.duration.toFixed(0)} 秒`, board.count ?? `${board.raw.length} 幕`, `${board.width}×${board.height}`].join(" · ");
   const sizeOf = (bytes) => (bytes ? ` · ${mb(bytes)}` : "");
 
-  // 出處分三行：誰做的、repo 網址、請喜歡的人點 Star（skill 開源後用來讓更多人看到）
+  // 出處卡片：左邊是 repo 的 QR code（手機掃了就到 repo），右邊兩行字和點星按鈕：誰做的、請喜歡的人點 Star（skill 開源後用來讓更多人看到）。
+  // 有出處時它取代「用手機掃描開啟」的網站 QR 卡；沒有出處（影片介紹的就是這個 repo、或不是以 plugin 安裝）時照舊放網站的 QR。
+  const creditQr = files.credit?.qrSvg
+    ? `<div class="qr" role="img" aria-label="${escapeHtml(bare(files.credit.url))} 的 QR code">${files.credit.qrSvg}</div>`
+    : "";
   const credit = files.credit
-    ? `<footer class="credit">
+    ? `<section class="card credit" aria-label="make-demo-video">
+      ${creditQr}<div class="credit-text">
       <span>用 <b>make-demo-video</b> 做的</span>
-      <a href="${safeHref(files.credit.url)}">${escapeHtml(bare(files.credit.url))}</a>
       <span>有用的話點個星，我會很開心，讓下一個需要的人也找得到</span>
       <a class="btn star" href="${safeHref(files.credit.url)}">⭐ GitHub 點星</a>
-    </footer>`
+      </div>
+    </section>`
     : "";
   const video = `<video src="${escapeHtml(files.mp4)}" autoplay loop muted playsinline controls></video>`;
   const qrLink = (label) =>
@@ -119,8 +124,7 @@ export function resultPage(board, style, files) {
       ${style.description ? `<p>${escapeHtml(style.description)}</p>` : ""}
       <div class="swatches">${swatches}</div>
     </section>
-    ${files.qrSvg && href ? `<section class="card">${qrLink("用手機掃描開啟")}</section>` : ""}
-    ${credit}
+    ${credit || (files.qrSvg && href ? `<section class="card">${qrLink("用手機掃描開啟")}</section>` : "")}
   </div>
 </main>`;
   }
@@ -143,7 +147,7 @@ export function resultPage(board, style, files) {
       <a class="btn" href="${escapeHtml(files.gif)}" download>下載 ${escapeHtml(files.gif)}</a>
     </section>` : ""}
   </div>
-  ${qrLink("影片裡介紹的網站") || credit ? `<div class="bottom">${qrLink("影片裡介紹的網站")}${credit}</div>` : ""}
+  ${credit || qrLink("影片裡介紹的網站") ? `<div class="bottom">${credit || qrLink("影片裡介紹的網站")}</div>` : ""}
 </main>`;
   }
 
@@ -178,7 +182,9 @@ ${style.fontUrl ? `<link rel="stylesheet" href="${safeHref(style.fontUrl)}">` : 
   .qr-row { display: flex; align-items: center; gap: 16px; }
   .qr { flex: none; width: 96px; padding: 8px; background: #fff; border-radius: 10px; border: 1px solid var(--border); }
   .qr svg { display: block; width: 100%; height: auto; }
-  .credit { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 12px; color: var(--muted); }
+  .credit { display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--muted); }
+  .card.credit .qr { width: 96px; padding: 8px; }
+  .credit-text { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .credit .star { min-height: 36px; padding: 0 14px; margin-top: 4px; font-size: 13px; color: var(--text); }
   .credit b { color: var(--text); }
   .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -189,7 +195,6 @@ ${style.fontUrl ? `<link rel="stylesheet" href="${safeHref(style.fontUrl)}">` : 
   .portrait .player { flex: 0 1 400px; margin: 0 auto; }
   .portrait .info { flex: 999 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 24px; }
   .portrait h1 { font-size: clamp(30px, 5vw, 44px); }
-  .portrait .credit { padding-top: 16px; border-top: 1px solid var(--border); }
 
   main.landscape { max-width: 960px; margin: 0 auto; display: flex; flex-direction: column; gap: 20px; }
   .landscape h1 { font-size: clamp(22px, 4vw, 28px); }
