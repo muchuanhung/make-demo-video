@@ -69,6 +69,17 @@ export async function loadCredit(boardUrl) {
   }
 }
 
+// 本機（file://）打開結果頁時，瀏覽器不理會 <a download>；按鈕外觀不變，只在本機把下載改成直接開影片的本機網址
+// （例如 file:///…/docs/demo/xxx/demo.mp4）。放到網站上（http/https）時不動，照舊下載。
+const LOCAL_DOWNLOAD = `
+if (location.protocol === "file:") {
+  document.querySelectorAll("a[download]").forEach(function (a) {
+    a.href = new URL(a.getAttribute("href"), location.href).href;
+    a.removeAttribute("download");
+  });
+}
+`;
+
 // files：{ mp4, mp4Bytes?, gif?, gifBytes?, gifWidth?, qrSvg?, credit? }（credit 由 loadCredit 產生）
 export function resultPage(board, style, files) {
   const c = style.colors;
@@ -206,5 +217,6 @@ ${style.fontUrl ? `<link rel="stylesheet" href="${safeHref(style.fontUrl)}">` : 
 </head>
 <body>
 ${body}
+<script>${LOCAL_DOWNLOAD}</script>
 </body></html>`;
 }

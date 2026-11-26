@@ -13,7 +13,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import ffmpegPath from "ffmpeg-static";
 import QRCode from "qrcode";
 import { parseArgs, launchBrowser } from "./lib.mjs";
-import { resultPage, loadCredit } from "./result-page.mjs";
+import { resultPage, loadCredit, contrast } from "./result-page.mjs";
 import { soundtrack, toWav, SAMPLE_RATE } from "./soundtrack.mjs";
 
 // ---------- 檢查（純函式，測試直接呼叫） ----------
@@ -243,6 +243,18 @@ function reelLook() {
   return { col: Object.fromEntries(Object.entries(col).filter(([, v]) => typeof v === "string")), font, fontUrl: link };
 }
 
+/**
+ * reel.html 沒指定卡片色（COL.white／surface）時的卡片底色：字在白卡上讀得清楚就用白卡；
+ * 深底配淺字的片子用「底色往字的顏色靠 8%」的深色卡，白卡上的淺字才不會看不見。
+ */
+function defaultSurface(bg, text) {
+  if (contrast(text, "#ffffff") >= 4.5) return "#ffffff";
+  const rgb = (h) => (/^#[0-9a-f]{6}$/i.test(h) ? [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)) : null);
+  const [a, b] = [rgb(bg), rgb(text)];
+  if (!a || !b) return bg;
+  return "#" + a.map((v, i) => Math.round(v + (b[i] - v) * 0.08).toString(16).padStart(2, "0")).join("");
+}
+
 /** 招牌片的結果頁設定：標題是腳本第一句（產品名），網址取 SIGNATURE.extra 裡像網址的字。 */
 export function resultLook(sig, look, scriptText) {
   const first = String(scriptText).split("\n").map((l) => l.replace(/^\s*(?:\d+\s*[.、)）]|[-*•])\s*/, "").trim()).find((l) => l && !l.startsWith("#"));
@@ -260,7 +272,7 @@ export function resultLook(sig, look, scriptText) {
     },
     style: {
       id: "signature", name: "招牌片", description: sig.concept,
-      colors: { bg, surface: hex(col.white ?? col.surface, "#ffffff"), text, muted: text, accent, accentText: "#ffffff", border: text },
+      colors: { bg, surface: hex(col.white ?? col.surface, defaultSurface(bg, text)), text, muted: text, accent, accentText: "#ffffff", border: text },
       fonts: { display: font, body: font, mono: "ui-monospace, monospace" },
       fontUrl: look?.fontUrl || undefined, radius: 12,
     },
