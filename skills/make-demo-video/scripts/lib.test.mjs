@@ -43,6 +43,27 @@ test("phoneScale：超出範圍或不是數字時擋下，並說明範圍", asyn
   }
 });
 
+test("seconds：拒絕字串秒數，避免把 2 秒和 3 秒串成 23 秒", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mdv-seconds-"));
+  const file = path.join(dir, "storyboard.json");
+  const scenes = [
+    { kind: "title", seconds: 2, heading: "開頭" },
+    { kind: "title", seconds: 3, heading: "結尾" },
+  ];
+  try {
+    await writeFile(file, JSON.stringify({ scenes }));
+    const board = await loadStoryboard(file);
+    assert.equal(board.duration, 5);
+    assert.equal(board.rows[1].start, 2);
+
+    scenes[0].seconds = "2";
+    await writeFile(file, JSON.stringify({ scenes }));
+    await assert.rejects(loadStoryboard(file), /第 1 幕.*seconds 要是.*數字/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("fullPageSlices：長圖在瀏覽器的單張上限內就一次截完", () => {
   assert.deepEqual(fullPageSlices(5821, 1), [{ y: 0, height: 5821 }]);
   assert.deepEqual(fullPageSlices(8000, 2), [{ y: 0, height: 8000 }]);

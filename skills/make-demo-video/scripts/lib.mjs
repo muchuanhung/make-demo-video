@@ -86,7 +86,7 @@ export async function loadStoryboard(file) {
     if (!KINDS.includes(scene.kind)) problems.push(`${where}：kind 只能是 ${KINDS.join("、")}`);
     // 模板展開出來的半幕（例如 toggle 的切換前）可以短到 0.3 秒；自己寫的幕最短 0.5 秒
     const min = scene.shot ? 0.3 : 0.5;
-    if (!(scene.seconds >= min && scene.seconds <= 30)) problems.push(`${where}：seconds 要在 ${min} 到 30 之間`);
+    if (!Number.isFinite(scene.seconds) || scene.seconds < min || scene.seconds > 30) problems.push(`${where}：seconds 要是 ${min} 到 30 之間的數字`);
     if (["title", "outro", "card"].includes(scene.kind) && !scene.heading) problems.push(`${where}：少了 heading`);
     if (scene.kind === "stat" && !scene.shot && !scene.count) problems.push(`${where}：少了 value（要跳動的數字）`);
     if (scene.tone && !TONES.includes(scene.tone)) problems.push(`${where}：tone 只能是 ${TONES.join("、")}`);
